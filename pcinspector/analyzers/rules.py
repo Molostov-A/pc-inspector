@@ -1,0 +1,266 @@
+"""Правила поиска мусора и классификация типов файлов.
+
+safety:
+  safe   — можно удалять без раздумий (кэши, временные файлы; восстановятся сами)
+  review — скорее всего не нужно, но стоит глянуть глазами
+"""
+
+from __future__ import annotations
+
+CATEGORIES: dict[str, set[str]] = {
+    "Видео": {"mp4", "mkv", "avi", "mov", "wmv", "webm", "flv", "m4v", "ts", "mts", "m2ts", "vob"},
+    "Аудио": {"mp3", "flac", "wav", "ogg", "m4a", "aac", "wma", "opus", "aiff"},
+    "Изображения": {
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "bmp",
+        "webp",
+        "tif",
+        "tiff",
+        "heic",
+        "raw",
+        "cr2",
+        "nef",
+        "arw",
+        "dng",
+        "psd",
+        "svg",
+        "ico",
+    },
+    "Документы": {
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "odt",
+        "ods",
+        "txt",
+        "rtf",
+        "md",
+        "csv",
+        "epub",
+        "fb2",
+        "djvu",
+    },
+    "Архивы": {"zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "cab"},
+    "Образы дисков": {"iso", "img", "vhd", "vhdx", "vmdk", "vdi", "qcow2", "wim", "esd"},
+    "Установщики": {"msi", "msix", "msixbundle", "appx", "exe"},
+    "Модели ИИ / веса": {
+        "safetensors",
+        "ckpt",
+        "pt",
+        "pth",
+        "bin",
+        "gguf",
+        "onnx",
+        "h5",
+        "pb",
+        "tflite",
+        "nemo",
+    },
+    "Код": {
+        "py",
+        "js",
+        "ts",
+        "tsx",
+        "jsx",
+        "cs",
+        "cpp",
+        "c",
+        "h",
+        "hpp",
+        "java",
+        "go",
+        "rs",
+        "html",
+        "css",
+        "json",
+        "xml",
+        "yaml",
+        "yml",
+        "toml",
+        "ipynb",
+        "sql",
+        "sh",
+        "ps1",
+    },
+    "Библиотеки / бинарники": {"dll", "so", "lib", "pyd", "sys", "pak", "dat", "db"},
+    "Временные / логи": {"tmp", "temp", "log", "dmp", "bak", "old", "crdownload", "part"},
+}
+
+EXT_TO_CAT = {ext: cat for cat, exts in CATEGORIES.items() for ext in exts}
+
+
+def category(ext: str) -> str:
+    return EXT_TO_CAT.get(ext, "Прочее")
+
+
+# Папки по имени (берётся самая верхняя, вложенные не считаются дважды)
+DIR_NAME_RULES = [
+    {
+        "id": "node_modules",
+        "names": ["node_modules"],
+        "safety": "review",
+        "title": "Зависимости Node.js (node_modules)",
+        "hint": "Восстанавливаются через npm install; удалять в неактивных проектах",
+    },
+    {
+        "id": "pycache",
+        "names": ["__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"],
+        "safety": "safe",
+        "title": "Кэш Python",
+        "hint": "Пересоздаётся автоматически",
+    },
+    {
+        "id": "venv",
+        "names": [".venv", "venv", "env"],
+        "safety": "review",
+        "title": "Виртуальные окружения Python",
+        "hint": "Пересоздаются из requirements.txt; удалять в заброшенных проектах",
+        "require_file": "pyvenv.cfg",
+    },
+    {
+        "id": "build",
+        "names": ["bin", "obj"],
+        "safety": "review",
+        "title": "Артефакты сборки .NET (bin/obj)",
+        "hint": "Пересоздаются при сборке",
+        "sibling_ext": ["csproj", "sln", "fsproj"],
+    },
+    {
+        "id": "browser_cache",
+        "names": ["Cache", "Code Cache", "GPUCache", "CacheStorage", "ShaderCache", "GrShaderCache"],
+        "safety": "safe",
+        "title": "Кэш браузеров и Electron-приложений",
+        "hint": "Закройте браузер перед очисткой",
+        "path_like": "%\\AppData\\%",
+    },
+]
+
+# Папки по пути (LIKE, регистр не важен)
+DIR_PATH_RULES = [
+    {
+        "id": "user_temp",
+        "like": "%\\AppData\\Local\\Temp",
+        "safety": "safe",
+        "title": "Временные файлы пользователя (%TEMP%)",
+        "hint": "Безопасно; занятые файлы пропустятся",
+    },
+    {
+        "id": "win_temp",
+        "like": "_:\\Windows\\Temp",
+        "safety": "safe",
+        "title": "Временные файлы Windows",
+        "hint": "Нужны права администратора",
+    },
+    {
+        "id": "wu_download",
+        "like": "_:\\Windows\\SoftwareDistribution\\Download",
+        "safety": "safe",
+        "title": "Загрузки Windows Update",
+        "hint": "Безопасно после установки обновлений",
+    },
+    {
+        "id": "recycle",
+        "like": "_:\\$Recycle.Bin",
+        "safety": "safe",
+        "title": "Корзина",
+        "hint": "Очистить корзину",
+    },
+    {
+        "id": "pip_cache",
+        "like": "%\\AppData\\Local\\pip\\cache",
+        "safety": "safe",
+        "title": "Кэш pip",
+        "hint": "pip cache purge",
+    },
+    {
+        "id": "npm_cache",
+        "like": "%\\AppData\\Local\\npm-cache",
+        "safety": "safe",
+        "title": "Кэш npm",
+        "hint": "npm cache clean --force",
+    },
+    {
+        "id": "nuget_cache",
+        "like": "%\\.nuget\\packages",
+        "safety": "review",
+        "title": "Кэш пакетов NuGet",
+        "hint": "dotnet nuget locals all --clear",
+    },
+    {
+        "id": "hf_cache",
+        "like": "%\\.cache\\huggingface",
+        "safety": "review",
+        "title": "Скачанные модели HuggingFace",
+        "hint": "Модели скачаются заново при необходимости",
+    },
+    {
+        "id": "torch_cache",
+        "like": "%\\.cache\\torch",
+        "safety": "review",
+        "title": "Кэш PyTorch",
+        "hint": "Скачается заново при необходимости",
+    },
+    {
+        "id": "crash_dumps",
+        "like": "%\\AppData\\Local\\CrashDumps",
+        "safety": "safe",
+        "title": "Аварийные дампы приложений",
+        "hint": "Нужны только для отладки",
+    },
+    {
+        "id": "wer",
+        "like": "%\\Microsoft\\Windows\\WER",
+        "safety": "safe",
+        "title": "Отчёты об ошибках Windows",
+        "hint": "Нужны только для отладки",
+    },
+    {
+        "id": "thumbcache",
+        "like": "%\\Microsoft\\Windows\\Explorer",
+        "safety": "safe",
+        "title": "Кэш эскизов Проводника",
+        "hint": "Пересоздаётся (очистка через cleanmgr)",
+    },
+    {
+        "id": "installer_cache",
+        "like": "_:\\Windows\\Installer\\$PatchCache$",
+        "safety": "review",
+        "title": "Кэш патчей установщика Windows",
+        "hint": "Только через DISM/cleanmgr",
+    },
+]
+
+# Файлы: расширения в определённых местах
+FILE_RULES = [
+    {
+        "id": "dl_installers",
+        "dir_like": "%\\Downloads%",
+        "exts": ["exe", "msi", "msix", "iso"],
+        "safety": "review",
+        "title": "Установщики и образы в «Загрузках»",
+        "hint": "Обычно не нужны после установки",
+    },
+    {
+        "id": "dumps",
+        "dir_like": "%",
+        "exts": ["dmp", "hdmp", "mdmp"],
+        "safety": "safe",
+        "title": "Файлы дампов памяти",
+        "hint": "Нужны только для отладки",
+    },
+    {
+        "id": "partial",
+        "dir_like": "%",
+        "exts": ["crdownload", "part", "partial"],
+        "safety": "safe",
+        "title": "Недокачанные файлы",
+        "hint": "Обрывки загрузок",
+    },
+]

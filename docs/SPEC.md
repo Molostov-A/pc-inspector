@@ -1,0 +1,588 @@
+# PC Inspector — техническое задание
+
+Версия ТЗ: 1.0 (2026-11-07)
+Статус: утверждено к разработке
+Связанные документы: [`../AGENTS.md`](../AGENTS.md) — правила для ИИ-разработчиков, [`ROADMAP.md`](ROADMAP.md) — этапы и чек-листы.
+
+---
+
+## 1. Назначение
+
+**PC Inspector** — локальное приложение для Windows, которое помогает **человеку и ИИ-ассистенту** вместе:
+
+1. понять, чем занято место на дисках;
+2. найти мусор, дубликаты, давно не используемые файлы, папки и программы;
+3. составить **план уборки и упорядочивания** и безопасно его выполнить (с возможностью отката);
+4. регулярно повторять это и видеть, что изменилось с прошлого раза.
+
+Ключевая идея: **один индекс → много интерфейсов**. Сканер один раз собирает данные о файловой системе и программах в SQLite. Дальше с этими данными работают:
+- человек — через веб-интерфейс в браузере (`http://127.0.0.1:8765`);
+- человек или скрипты — через CLI;
+- ИИ-ассистент (Claude, ChatGPT и др.) — через MCP-сервер и JSON-вывод CLI.
+
+### 1.1. Целевая машина пользователя (для понимания масштаба)
+
+- Windows 10 IoT Enterprise LTSC 2021 (19044), x64, файловая система NTFS.
+- Три диска: `A:` (~450 ГБ), `B:` (~930 ГБ), `C:` (~950 ГБ). Все заполнены более чем на 85 %.
+- Ожидаемый объём: **2–5 млн файлов, 300–800 тыс. папок** суммарно.
+- Установлены Python 3.11, Node 22, .NET 9. Пользователь пишет на Python, у него много проектов с `.venv` и `node_modules` в `B:\Programm`.
+- Язык интерфейса: **русский**.
+
+### 1.2. Чего приложение НЕ делает (вне рамок)
+
+- Не «оптимизирует» реестр, службы и автозагрузку, не чистит реестр.
+- Не удаляет программы само: показывает неиспользуемые и открывает стандартный деинсталлятор.
+- Не работает с сетевыми дисками и облаками (OneDrive-заглушки только помечаются).
+- Не отправляет данные в интернет. Никакой телеметрии. Сервер слушает только `127.0.0.1`.
+- Не требует прав администратора для базовой работы. Где они нужны (Prefetch, `C:\Windows\Temp`), функция деградирует и показывает пояснение.
+
+---
+
+## 2. Термины
+
+| Термин | Значение |
+|---|---|
+| **Индекс** | SQLite-база `data/index.db` со снимком файловой системы и метаданными |
+| **Корень (root)** | Путь, который сканировали (`C:\`, `B:\Programm`) |
+| **Анализатор** | Плагин, который читает индекс и возвращает `Report` |
+| **Report / Finding** | Единый формат результата анализа (см. §6) |
+| **Safety** | Метка находки: `safe` — можно удалять, `review` — решает человек, `keep` — не трогать, `info` — справка |
+| **Защищённая зона** | Системные папки (`C:\Windows`, `Program Files`, …), из которых нельзя ничего удалять или перемещать |
+| **План (plan)** | Список предлагаемых действий (удалить в корзину, в карантин, переместить), который утверждает человек |
+| **Карантин** | Папка, куда файлы перемещаются вместо удаления; из неё можно вернуть файлы в течение N дней |
+| **Журнал** | Таблица всех выполненных действий, по ней работает откат |
+| **Коллектор** | Модуль, который собирает данные не из файловой системы (реестр программ, Prefetch, хэши) |
+
+---
+
+## 3. Пользователи и сценарии
+
+### 3.1. Человек
+
+- **С1. Первичный осмотр.** Пользователь сканирует все диски и видит на главной: сколько занято и свободно на каждом диске, сколько можно освободить безопасно (`safe`) и сколько после проверки (`review`), топ-5 крупнейших папок.
+- **С2. Навигация.** Treemap и таблица папок, как в WinDirStat/WizTree: клик внутрь папки, «хлебные крошки», кнопка «Открыть в Проводнике».
+- **С3. Уборка мусора.** Страница «Мусор» сгруппирована по правилам (кэш pip, node_modules, %TEMP%…). Пользователь отмечает группы или отдельные пути и нажимает «В план».
+- **С4. Дубликаты.** Группы одинаковых файлов. Пользователь выбирает, какую копию оставить (по умолчанию самую старую или ту, что в «правильной» папке), остальные идут в план.
+- **С5. Забытое.** «Забытые папки» (ничего не менялось больше года), «крупные давно не открытые файлы», «программы, которые не запускались больше N дней».
+- **С6. Упорядочивание.** Предложения: разобрать «Загрузки» по типам и годам, найти пустые папки, собрать разбросанные проекты, найти установщики, которые уже установлены.
+- **С7. Выполнение плана.** Экран плана: список действий, суммарный объём, предупреждения. Кнопка «Выполнить» с подтверждением. После выполнения действия видны в «Истории», их можно откатить.
+- **С8. Регулярная уборка.** Раз в неделю по расписанию (Планировщик задач Windows): пересканировать, посчитать «что выросло», сохранить отчёт. Отчёт виден на главной.
+
+### 3.2. ИИ-ассистент (через MCP или CLI `--json`)
+
+- **И1.** Получить сводку состояния ПК в компактном виде (`ai_brief`, не больше ~4000 токенов).
+- **И2.** Запустить любой анализатор с параметрами и получить JSON.
+- **И3.** Выполнить произвольный **read-only** SQL-запрос к индексу (с лимитом строк).
+- **И4.** Пройтись по дереву папок (`tree`).
+- **И5.** Составить **план** уборки или упорядочивания с обоснованием каждого пункта (`reason`).
+- **И6.** ИИ **НЕ может выполнять** планы, удалять или перемещать файлы. Выполнение — только человек через UI или CLI с явным подтверждением. Это главный инвариант безопасности (§9).
+
+---
+
+## 4. Технологический стек (обязателен)
+
+| Слой | Технология | Почему |
+|---|---|---|
+| Язык | Python 3.11+ | Есть у пользователя, хорош для LLM-разработки |
+| Индекс | SQLite (stdlib `sqlite3`), режим WAL | Без сервера, удобно и для SQL-запросов ИИ |
+| Веб-API | FastAPI + Uvicorn | Автодокументация OpenAPI, типизация через Pydantic |
+| Веб-UI | Статические HTML + ванильный JS (ES-модули) + **Apache ECharts** (локальная копия в `web/vendor/`) | **Без сборки и без npm**: проще поддерживать и LLM, и человеку |
+| MCP | Официальный Python SDK `mcp` (FastMCP), транспорт stdio | Стандарт для Claude Desktop/Code и других клиентов |
+| Удаление в корзину | `send2trash` | Корректная работа с корзиной Windows |
+| Хэши | `hashlib.blake2b` (stdlib); `xxhash` — опционально для ускорения | |
+| Реестр | stdlib `winreg` | |
+| Тесты | `pytest` | |
+| Линт и формат | `ruff` (lint + format), длина строки 110 | |
+| Упаковка | `pyproject.toml`; запуск через `python -m pcinspector` | |
+
+Другие зависимости добавлять только с обоснованием в `docs/DECISIONS.md`.
+
+---
+
+## 5. Архитектура
+
+### 5.1. Слои и правило зависимостей
+
+```
+            ┌────────────┐  ┌────────────┐  ┌──────────────┐
+ Интерфейсы │  cli.py    │  │  api/ +    │  │ mcp_server.py│
+            │            │  │  web/      │  │              │
+            └─────┬──────┘  └─────┬──────┘  └──────┬───────┘
+                  └───────────────┼────────────────┘
+                                  ▼
+ Фасад                     services.py    ← единая точка входа для всех интерфейсов
+                                  │
+        ┌─────────────┬───────────┼──────────────┬───────────────┐
+        ▼             ▼           ▼              ▼               ▼
+   analyzers/    collectors/   actions/      core/scanner    scheduler.py
+   (только       (реестр,      (планы,       (обход ФС)
+    чтение)       Prefetch,     корзина,
+                  хэши)         карантин,
+                                журнал)
+        └─────────────┴───────────┴──────────────┘
+                                  ▼
+ Ядро                core/ (db, migrations, models, safety, fmt), config.py
+```
+
+**Правила (проверяются на ревью):**
+1. Зависимости направлены только вниз. `core` не импортирует ничего из проекта, кроме `config`.
+2. Интерфейсы (`cli`, `api`, `mcp_server`) **не содержат бизнес-логики и SQL**. Они вызывают функции из `services.py` и форматируют результат.
+3. Анализаторы **только читают** индекс (соединение открывается в read-only режиме). Они не пишут в БД и не трогают файловую систему.
+4. Изменять файловую систему может **только** `actions/executor.py`. Ни один другой модуль не вызывает `os.remove`, `shutil.move`, `send2trash` и т. п.
+5. Проверка защищённых путей реализована **в одном месте**: `core/safety.py`. Её вызывают и при составлении плана, и при выполнении.
+
+### 5.2. Структура каталогов (целевая)
+
+```
+pc-inspector/
+├── AGENTS.md                 # правила для ИИ-разработчиков (читать первым)
+├── README.md                 # для человека: установка, запуск
+├── pyproject.toml
+├── docs/
+│   ├── SPEC.md               # это ТЗ
+│   ├── ROADMAP.md            # этапы, чек-листы, статус
+│   └── DECISIONS.md          # журнал архитектурных решений (ADR, кратко)
+├── data/                     # создаётся при запуске, в .gitignore
+│   ├── index.db
+│   ├── reports/              # сохранённые отчёты (JSON + Markdown)
+│   └── logs/
+├── pcinspector/
+│   ├── __init__.py           # __version__
+│   ├── __main__.py           # -> cli.main()
+│   ├── config.py             # пути, переменные окружения, настройки пользователя
+│   ├── services.py           # фасад (см. §5.4)
+│   ├── cli.py
+│   ├── mcp_server.py
+│   ├── scheduler.py          # регистрация задачи в Планировщике Windows
+│   ├── core/
+│   │   ├── db.py             # подключение, схема
+│   │   ├── migrations.py     # версии схемы, миграции
+│   │   ├── scanner.py        # обход ФС → индекс
+│   │   ├── models.py         # Finding, Report, PlanItem, ... (dataclasses)
+│   │   ├── safety.py         # защищённые пути, валидация действий
+│   │   ├── jobs.py           # фоновые задачи (скан, хэширование) с прогрессом
+│   │   └── fmt.py            # размеры, даты
+│   ├── collectors/
+│   │   ├── apps.py           # установленные программы (реестр, Appx)
+│   │   ├── usage.py          # последний запуск: Prefetch, UserAssist
+│   │   └── hashing.py        # хэши для поиска дубликатов
+│   ├── analyzers/
+│   │   ├── __init__.py       # импорт всех модулей = регистрация
+│   │   ├── base.py           # Analyzer, Param, REGISTRY, @register
+│   │   ├── rules.py          # данные: правила мусора, категории расширений
+│   │   ├── overview.py       # roots, tree, top_files, types
+│   │   ├── stale.py          # stale_files, forgotten_dirs
+│   │   ├── junk.py
+│   │   ├── duplicates.py
+│   │   ├── apps.py           # unused_apps, app_leftovers
+│   │   ├── growth.py         # что выросло с прошлого скана
+│   │   └── organize.py       # empty_dirs, downloads_sort, installed_installers, scattered_projects
+│   ├── actions/
+│   │   ├── plans.py          # CRUD планов (только БД)
+│   │   ├── executor.py       # ЕДИНСТВЕННОЕ место, меняющее ФС
+│   │   └── quarantine.py     # раскладка карантина, восстановление, очистка
+│   ├── api/
+│   │   ├── app.py            # FastAPI(), подключение роутеров, статика, CSRF
+│   │   ├── schemas.py        # Pydantic-модели запросов и ответов
+│   │   └── routes/           # roots.py, scan.py, analyzers.py, plans.py, actions.py, system.py
+│   └── web/
+│       ├── index.html
+│       ├── css/app.css
+│       ├── js/               # app.js (роутер), api.js, pages/*.js, components/*.js
+│       └── vendor/echarts.min.js
+└── tests/
+    ├── conftest.py           # фикстуры: временное дерево файлов, временная БД
+    ├── test_scanner.py
+    ├── test_analyzers_*.py
+    ├── test_safety.py
+    ├── test_executor.py
+    ├── test_api.py
+    └── test_mcp.py
+```
+
+### 5.3. Плагинная модель анализаторов
+
+Анализатор — класс с декоратором `@register` (см. существующий `pcinspector/analyzers/base.py`):
+
+```python
+@register
+class StaleFiles(Analyzer):
+    id = "stale_files"  # snake_case, уникальный, стабильный (это публичный API)
+    title = "Крупные файлы, давно не использовавшиеся"
+    description = "Что ищет и зачем — 1–2 предложения (видно в UI и в MCP)."
+    params = [Param("days", "int", 365, "Сколько дней..."), P_MIN_SIZE, P_ROOT, P_LIMIT]
+
+    def run(self, con, days, min_size, root, limit) -> Report: ...
+```
+
+Из метаданных `params` **автоматически** строятся:
+- подкоманда CLI `python -m pcinspector stale_files --days 180 --min-size 1G`;
+- эндпоинт `GET /api/analyzers/stale_files?days=180&min_size=1G`;
+- форма параметров в UI (страница «Анализаторы»);
+- JSON-схема параметров для MCP-инструмента `run_analyzer`.
+
+Типы параметров: `int`, `str`, `size` (строки `500K`, `100M`, `2G`), `bool`, `choice` (нужно добавить: тип с полем `choices`).
+
+### 5.4. Фасад `services.py`
+
+Все интерфейсы вызывают только эти функции (сигнатуры ориентировочные):
+
+```python
+def list_roots() -> Report
+def start_scan(paths: list[str]) -> JobId           # фоновая задача
+def job_status(job_id) -> JobStatus                 # progress, files, dirs, errors, state
+def list_analyzers() -> list[AnalyzerInfo]          # id, title, description, params-schema
+def run_analyzer(analyzer_id: str, **params) -> Report
+def tree(path: str, limit: int = 100) -> Report
+def sql_readonly(query: str, limit: int = 500) -> list[dict]
+def ai_brief(max_items: int = 15) -> str            # Markdown-сводка для LLM
+def create_plan(title: str, author: Literal["user","ai"], note: str = "") -> PlanId
+def add_plan_items(plan_id, items: list[PlanItemIn]) -> list[PlanItemResult]  # с валидацией safety
+def get_plan(plan_id) -> Plan
+def list_plans() -> list[PlanSummary]
+def execute_plan(plan_id, confirm_token: str) -> ExecutionResult   # ТОЛЬКО cli/api, не mcp
+def restore_action(action_id) -> ActionResult
+def list_quarantine() -> list[QuarantineEntry]
+def purge_quarantine(older_than_days: int) -> int
+def open_in_explorer(path: str) -> None
+def save_report(report: Report) -> Path
+```
+
+---
+
+## 6. Модель данных
+
+### 6.1. Формат результата (`core/models.py`, уже есть в коде)
+
+```python
+Finding:
+  kind: "dir" | "file" | "group" | "app" | "stat"
+  title: str            # коротко
+  size: int             # байты
+  path: str | None
+  safety: "safe" | "review" | "keep" | "info"
+  category: str | None  # id правила / категория
+  reason: str | None    # человеческое объяснение «почему найдено»
+  meta: dict            # даты (unix ts), счётчики, top-N путей для group и т. п.
+
+Report:
+  analyzer, title, params, summary: dict, notes: list[str], findings: list[Finding]
+  total_size (вычисляемое)
+```
+
+**Требования:** даты в `meta` хранить как unix timestamp (float). Размеры — в байтах (int). Форматирует только интерфейс. Вывод `--json` равен `Report.to_dict()`.
+
+### 6.2. Схема SQLite
+
+Текущая (версия 1, реализована в `core/db.py`): `roots`, `dirs`, `files`, `errors`, представление `files_v`.
+
+Ключевые поля:
+- `dirs`: `id, root_id, parent_id, path, name, depth, own_size, own_files, total_size, total_files, mtime, newest_mtime, protected`;
+- `files`: `id, root_id, dir_id, name, ext, size, mtime, atime, ctime` (полный путь = `dirs.path + '\' + name`, через `files_v`).
+
+**Добавить** (миграции v2+ в `core/migrations.py`, версия хранится в `PRAGMA user_version`):
+
+```sql
+-- v2: доп. атрибуты файлов
+ALTER TABLE files ADD COLUMN attrs INTEGER;          -- st_file_attributes (hidden, system, offline/cloud)
+ALTER TABLE files ADD COLUMN alloc_size INTEGER;     -- размер на диске (опционально, этап 6)
+
+-- v2: история сканов для «что выросло»
+CREATE TABLE snapshots (
+  id INTEGER PRIMARY KEY, root_id INTEGER, taken_at TEXT,
+  total_size INTEGER, file_count INTEGER
+);
+CREATE TABLE snapshot_dirs (                          -- только папки глубины ≤ 4 и размером ≥ 50 МБ
+  snapshot_id INTEGER, path TEXT, total_size INTEGER, total_files INTEGER
+);
+
+-- v3: хэши
+CREATE TABLE file_hashes (
+  path TEXT PRIMARY KEY COLLATE NOCASE,               -- путь, а не file_id: id меняются при пересканировании
+  size INTEGER, mtime REAL,                            -- если изменились — хэш недействителен
+  partial_hash TEXT,                                   -- blake2b(первые 64 КБ + последние 64 КБ)
+  full_hash TEXT
+);
+
+-- v4: программы
+CREATE TABLE apps (
+  id INTEGER PRIMARY KEY,
+  source TEXT,              -- 'hklm' | 'hklm_wow' | 'hkcu' | 'appx'
+  reg_key TEXT, name TEXT, publisher TEXT, version TEXT,
+  install_date TEXT, install_location TEXT,
+  estimated_size INTEGER,   -- байты (в реестре EstimatedSize в КБ)
+  measured_size INTEGER,    -- из индекса по install_location, если есть
+  uninstall_cmd TEXT, quiet_uninstall_cmd TEXT,
+  is_system_component INTEGER
+);
+CREATE TABLE app_usage (
+  app_id INTEGER, exe_name TEXT,
+  last_run REAL, run_count INTEGER,
+  source TEXT                -- 'prefetch' | 'userassist' | 'exe_atime'
+);
+
+-- v5: планы и журнал
+CREATE TABLE plans (
+  id INTEGER PRIMARY KEY, title TEXT, author TEXT,     -- 'user' | 'ai'
+  note TEXT, created_at TEXT, status TEXT              -- draft | executed | partially | cancelled
+);
+CREATE TABLE plan_items (
+  id INTEGER PRIMARY KEY, plan_id INTEGER,
+  action TEXT,               -- 'recycle' | 'quarantine' | 'move' | 'delete_empty_dir'
+  path TEXT, target TEXT,    -- target только для move
+  size INTEGER, expected_mtime REAL,   -- снимок на момент добавления, для проверки перед выполнением
+  safety TEXT, reason TEXT, source TEXT,   -- source: id анализатора или 'ai' / 'manual'
+  selected INTEGER DEFAULT 1,
+  status TEXT DEFAULT 'pending', error TEXT  -- pending | done | skipped | failed
+);
+CREATE TABLE actions_log (
+  id INTEGER PRIMARY KEY, plan_item_id INTEGER, at TEXT,
+  action TEXT, src TEXT, dst TEXT, size INTEGER,
+  restorable INTEGER, restored_at TEXT
+);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);  -- JSON-значения
+```
+
+Пересканирование корня удаляет и пересоздаёт его строки в `dirs` и `files`. Перед этим сохраняется снимок (`snapshots`). Таблицы `file_hashes`, `apps`, `plans` и `actions_log` при пересканировании **не удаляются**.
+
+---
+
+## 7. Функциональные требования
+
+Каждое требование имеет ID, на него ссылаются задачи и тесты.
+
+### F1. Сканер (`core/scanner.py`) — черновик уже есть
+
+- **F1.1** Обход через `os.scandir` итеративно, без рекурсии, со стеком. Атрибуты берутся из `DirEntry.stat(follow_symlinks=False)`: на Windows они кэшируются из листинга, лишних системных вызовов нет.
+- **F1.2** Точки повторной обработки (symlink, junction; атрибут `FILE_ATTRIBUTE_REPARSE_POINT`) **не обходить**.
+- **F1.3** Ошибки доступа не прерывают скан: записываются в `errors` и учитываются в счётчике.
+- **F1.4** Папки верхнего уровня диска из списка защищённых (`Windows`, `Program Files`, `Program Files (x86)`, `ProgramData`, `System Volume Information`, `$Recycle.Bin`, `Recovery`, `Boot`, `$Windows.~BT`, `$Windows.~WS`) и всё внутри помечаются `protected=1`. Список хранится в `core/safety.py`.
+- **F1.5** После обхода выполняется агрегация снизу вверх: `total_size`, `total_files`, `newest_mtime`.
+- **F1.6** Вставка батчами по 50 000 строк. На время скана индексы удаляются, после скана создаются заново. `PRAGMA synchronous=OFF` на время скана.
+- **F1.7** Прогресс (файлы, папки, ошибки, текущий путь, скорость) доступен через `core/jobs.py`. CLI показывает строку прогресса, UI — прогресс-бар (опрос `GET /api/jobs/{id}` раз в секунду).
+- **F1.8** Отмена скана: старые данные корня сохраняются. Новые данные пишутся во временные строки с `root_id` нового корня и заменяют старые атомарно в одной транзакции в конце.
+- **F1.9** Исключения: пользовательский список путей (`settings.exclude_paths`), по умолчанию `pagefile.sys`, `hiberfil.sys`, `swapfile.sys`. Их размер учитывать в отчёте «Системные файлы», но внутрь не обходить.
+- **F1.10** Файлы-заглушки OneDrive (атрибуты `RECALL_ON_DATA_ACCESS 0x400000` или `OFFLINE 0x1000`) помечать в `attrs` и не считать занимающими место.
+- **F1.11** Перед перезаписью сохранить снимок (`snapshots` и `snapshot_dirs`).
+- **F1.12** Производительность: не медленнее **~1 млн файлов за 3 минуты** на SSD. Память не больше **1,5 ГБ** на 5 млн файлов.
+
+### F2. Анализаторы
+
+Существуют в черновике: `roots`, `tree`, `top_files`, `types`, `stale_files`, `forgotten_dirs`, `junk`.
+
+| ID | Что делает | Ключевые параметры | Safety находок |
+|---|---|---|---|
+| `roots` | Корни, размер, дата скана, свободное место | — | info |
+| `tree` | Дочерние папки по размеру + «файлы в самой папке» | path, limit | info / keep |
+| `top_files` | Крупнейшие файлы | root, ext, limit | info / keep |
+| `types` | Место по категориям и расширениям | root, by=category\|ext | info |
+| `stale_files` | Крупные файлы, где max(mtime, atime) старше N дней | days=365, min_size=100M | review |
+| `forgotten_dirs` | Самые верхние папки, где `newest_mtime` старше N дней | days=365, min_size=100M | review |
+| `junk` | Правила из `rules.py`, без двойного счёта вложенных | root, min_size, group | safe / review |
+| `duplicates` (F2.1) | Группы одинаковых файлов | min_size=1M, root, limit | review |
+| `unused_apps` (F2.2) | Программы, которые не запускались N дней | days=180 | review |
+| `app_leftovers` (F2.3) | Папки в `AppData`/`ProgramData` от удалённых программ | min_size=10M | review |
+| `growth` (F2.4) | Что выросло или уменьшилось со снимка | since=last, min_delta=500M | info |
+| `empty_dirs` (F2.5) | Пустые папки (поддерево без файлов) | root | safe |
+| `downloads_sort` (F2.6) | Предложения разложить «Загрузки» по категориям и годам | path=%USERPROFILE%\Downloads | info → план move |
+| `installed_installers` (F2.7) | Установщики в Загрузках, чья программа уже установлена (сопоставление имени и версии с `apps`) | — | review |
+| `scattered_projects` (F2.8) | Папки с `.git`, `pyproject.toml`, `package.json` и т. п. вне основной папки проектов. Заброшенные проекты с тяжёлыми `.venv` и `node_modules` | projects_root | info / review |
+| `big_media` (F2.9) | Видео и образы дисков больше N ГБ вне медиа-папок | min_size=1G | review |
+
+**F2.1. Дубликаты (`collectors/hashing.py` + `analyzers/duplicates.py`)**
+1. Группы по `size` (только `size >= min_size`, вне protected, без заглушек облака).
+2. Для кандидатов посчитать `partial_hash` (первые и последние 64 КБ). Кэш — в `file_hashes` по (path, size, mtime).
+3. Для совпавших по partial — `full_hash` (blake2b, чтение блоками по 1 МБ).
+4. Хэширование — фоновая задача с прогрессом. Анализатор только читает готовые хэши. Если хэшей нет, в `notes` пишется «запустите `hash`».
+5. Finding: `kind="group"`, `size` = сколько освободится (размер × (копий − 1)), `meta.copies` = список путей с mtime. Рекомендуемая к сохранению копия отмечена флагом `keep_suggested` (правило: самая старая по ctime. При равенстве — путь вне `Downloads`/`Temp`/`Desktop`).
+6. Жёсткие ссылки (одинаковый file index, `st_ino` на NTFS) — **не дубликаты**, исключать.
+
+**F2.2. Неиспользуемые программы (`collectors/apps.py`, `collectors/usage.py`)**
+- Источники списка: `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`, то же под `WOW6432Node`, `HKCU\...\Uninstall`. Пропускать `SystemComponent=1`, обновления (`ParentKeyName`, `ReleaseType` = Update/Hotfix). Пакеты Microsoft Store — через `powershell Get-AppxPackage` (только `-not IsFramework`, `SignatureKind -ne System`) — опционально.
+- Последний запуск, по убыванию надёжности:
+  1. **Prefetch** `C:\Windows\Prefetch\*.pf`: имя exe из имени файла, время последнего запуска ≈ mtime `.pf`. Нужны права админа. Без них — пропустить и написать в `notes`.
+  2. **UserAssist** `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist\{GUID}\Count`: имена в ROT13, структура значения — счётчик запусков (смещение 4, uint32) и FILETIME последнего запуска (смещение 60, 8 байт) для Win7+.
+  3. **atime exe-файлов** в `install_location` (ненадёжно, пометить как низкую достоверность).
+- Сопоставление программа ↔ exe: все `.exe` внутри `InstallLocation` (из индекса) + `DisplayIcon`.
+- Finding: `kind="app"`, `size = measured_size or estimated_size`, `meta = {last_run, run_count, confidence: high|medium|low, uninstall_cmd}`. **Действие в UI — только «Открыть деинсталлятор»** (запуск `UninstallString`, без тихого режима).
+
+**F2.3. Остатки удалённых программ:** папки первого уровня в `%APPDATA%`, `%LOCALAPPDATA%`, `C:\ProgramData` (последняя — только чтение, safety=`keep`), имя которых не совпадает нечётко (нормализация + `difflib` ≥ 0.8) ни с одной программой из `apps` и ни с одним издателем. Белый список системных имён (`Microsoft`, `Packages`, `Temp`, `Programs` …) — в `rules.py`.
+
+**F2.4. Рост:** сравнение `snapshot_dirs` двух снимков, вывод папок с наибольшим |Δ|. Без снимков — `notes`.
+
+### F3. Планы и выполнение (`actions/`)
+
+- **F3.1** Действия: `recycle` (в корзину Windows, по умолчанию), `quarantine` (переместить в `<диск>:\.pci-quarantine\<plan_id>\<относительный путь>` — **на тот же диск**, чтобы перемещение было мгновенным, плюс `manifest.json`), `move` (перенести в `target`), `delete_empty_dir`. **Безвозвратного удаления нет.** Очистка карантина старше N дней (по умолчанию 30) — отдельная явная команда.
+- **F3.2** При добавлении пункта в план (`add_plan_items`) проверяется:
+  - путь существует в индексе;
+  - путь не в защищённой зоне (`core/safety.py`) и не является предком защищённой зоны;
+  - путь не корень диска, не `%USERPROFILE%`, не папка пользователя верхнего уровня (`Desktop`, `Documents`, `Downloads` …) целиком;
+  - путь не внутри `pc-inspector` и `data/`;
+  - нет дублирования и вложенности с уже добавленными пунктами.
+  Отклонённые пункты возвращаются с причиной, а не молча пропускаются.
+- **F3.3** Перед выполнением каждого пункта: сравнить текущие `size` и `mtime` с `expected_*`. Если изменились — `skipped` с причиной «файл изменился после анализа». Повторно проверить safety.
+- **F3.4** Выполнение пишет `actions_log`. `restore_action` возвращает файл из карантина или после `move` (из корзины — только инструкция пользователю открыть Корзину, автоматическое восстановление не требуется).
+- **F3.5** Занятые файлы (`PermissionError`, `sharing violation`) → `failed` с понятным текстом, выполнение продолжается.
+- **F3.6** `execute_plan` требует `confirm_token`. Токен выдаёт `GET /api/plans/{id}/confirm-token` после показа пользователю итога. В CLI вместо токена — интерактивное «Введите yes» или флаг `--yes`.
+- **F3.7** Отчёт после выполнения: сколько освобождено, сколько пропущено и почему.
+
+### F4. CLI (`cli.py`)
+
+Требования:
+- Подкоманды анализаторов генерируются из `REGISTRY` (имена параметров: `min_size` → `--min-size`).
+- Глобальный флаг `--json` (вывод `Report.to_dict()`, UTF-8, `ensure_ascii=False`) и `--db PATH`.
+- Человеческий вывод — таблица: размер | safety | путь или название | причина, плюс итог. Пути длиннее ширины терминала сокращать посередине.
+- `sys.stdout.reconfigure(errors="replace")`, чтобы кириллица в путях не роняла вывод.
+
+Команды:
+```
+python -m pcinspector scan C:\ B:\ A:\        # скан (по умолчанию все локальные диски NTFS)
+python -m pcinspector hash [--min-size 1M]    # посчитать хэши для дубликатов
+python -m pcinspector apps                    # собрать список программ и их использование
+python -m pcinspector <analyzer_id> [params]  # любой анализатор
+python -m pcinspector analyzers               # список анализаторов с параметрами
+python -m pcinspector sql "SELECT ..."        # read-only SQL
+python -m pcinspector brief                   # Markdown-сводка для ИИ
+python -m pcinspector plan list|show ID|execute ID [--yes]
+python -m pcinspector quarantine list|restore ACTION_ID|purge --older-than 30
+python -m pcinspector serve [--port 8765] [--open]   # веб-интерфейс
+python -m pcinspector mcp                     # MCP-сервер (stdio)
+python -m pcinspector schedule install|remove|status [--weekly SUN 03:00]
+```
+
+### F5. Веб-API (`api/`)
+
+- Слушает **только** `127.0.0.1`. Порт по умолчанию 8765.
+- Мутирующие запросы (POST/DELETE) требуют заголовок `X-PCI-Token`. Токен генерируется при старте и вставляется в `index.html` сервером. Проверять `Origin`/`Host` — защита от CSRF и DNS rebinding.
+- Ответы — JSON, ошибки — `{"error": {"code", "message"}}`.
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/roots` | `Report` от `roots` |
+| GET | `/api/drives` | Локальные диски: буква, метка, всего, свободно, просканирован ли |
+| POST | `/api/scan` | `{paths: [...]}` → `{job_id}` |
+| POST | `/api/hash` | → `{job_id}` |
+| POST | `/api/apps/collect` | → `{job_id}` |
+| GET | `/api/jobs/{id}` | прогресс |
+| POST | `/api/jobs/{id}/cancel` | отмена |
+| GET | `/api/analyzers` | список + JSON-схема параметров |
+| GET | `/api/analyzers/{id}` | query-параметры → `Report` |
+| GET | `/api/tree?path=&limit=` | `Report` |
+| GET | `/api/treemap?path=&depth=2` | вложенная структура для ECharts (узлы < 0,5 % родителя схлопнуть в «прочее») |
+| GET | `/api/brief` | Markdown |
+| GET/POST | `/api/plans` | список / создать |
+| GET | `/api/plans/{id}` | план с пунктами |
+| POST | `/api/plans/{id}/items` | добавить пункты (ответ: принятые и отклонённые с причинами) |
+| PATCH | `/api/plans/{id}/items/{item}` | выбрать или снять, сменить действие |
+| GET | `/api/plans/{id}/confirm-token` | токен подтверждения |
+| POST | `/api/plans/{id}/execute` | `{confirm_token}` |
+| GET | `/api/history` | журнал действий |
+| POST | `/api/history/{action_id}/restore` | откат |
+| GET | `/api/quarantine` / POST `/api/quarantine/purge` | |
+| POST | `/api/open` | `{path}` → открыть в Проводнике (`explorer /select,`), только пути из индекса |
+| GET/PUT | `/api/settings` | настройки |
+
+### F6. Веб-интерфейс (`web/`)
+
+Общие требования: одностраничное приложение на hash-роутинге (`#/explorer?path=...`). Светлая и тёмная тема (по `prefers-color-scheme` + переключатель). Русский язык. Размеры в человекочитаемом виде, но с точными байтами во всплывающей подсказке. Цвета safety: safe — зелёный, review — жёлтый, keep — серый, info — нейтральный. Все таблицы сортируются и фильтруются на клиенте. Ширина от 1024 px (мобильная версия не нужна).
+
+Экраны:
+1. **Главная (`#/`)** — карточки дисков (полоса занято/свободно), «Можно освободить: safe X ГБ, review Y ГБ», топ-5 папок, топ-5 групп мусора, «Рост с прошлого скана», дата последнего скана, кнопка «Пересканировать».
+2. **Обзор (`#/explorer`)** — treemap (ECharts, 2 уровня, клик = вход) + таблица детей с размером, долей (полоса), числом файлов, датой последнего изменения. Крошки. Действия в строке: «Открыть в Проводнике», «В план».
+3. **Мусор (`#/junk`)** — группы, раскрывающиеся до путей. Чекбоксы. Кнопка «Добавить выбранное в план». Подсказка (`hint`) у каждой группы.
+4. **Дубликаты (`#/duplicates`)** — группы, в каждой радиокнопка «оставить». Остальные можно добавить в план.
+5. **Забытое (`#/stale`)** — вкладки: забытые папки, давно не открытые файлы, неиспользуемые программы (с кнопкой «Удалить программу…» → деинсталлятор).
+6. **Порядок (`#/organize`)** — пустые папки, сортировка Загрузок (предпросмотр «было → станет»), установщики уже установленных программ, разбросанные проекты.
+7. **Анализаторы (`#/analyzers`)** — список всех анализаторов. Форма параметров строится по схеме, результат — универсальная таблица `Report`. Новые анализаторы появляются здесь без правок фронтенда.
+8. **Планы (`#/plans`, `#/plans/:id`)** — список планов (автор `user`/`ai` с иконкой). В плане: пункты с reason, safety, размером, выбором действия. Итог. Предупреждения. Кнопка «Выполнить…» → модальное окно с итогом и подтверждением.
+9. **История (`#/history`)** — журнал, «Откатить», карантин с размером и кнопкой «Очистить старше 30 дней».
+10. **Настройки (`#/settings`)** — корни для скана, исключения, папка проектов, дни для «давно», расписание, путь к карантину.
+
+### F7. MCP-сервер (`mcp_server.py`)
+
+Транспорт stdio, запуск `python -m pcinspector mcp`. Инструменты (имена — snake_case, описания по-английски — их читает модель, тексты в результатах — по-русски):
+
+| Инструмент | Описание |
+|---|---|
+| `get_brief()` | Markdown-сводка: диски, итог мусора, топ папок, рост, дата скана |
+| `list_analyzers()` | id, описание, параметры |
+| `run_analyzer(analyzer_id, params: dict)` | `Report` JSON. Максимум 200 findings, иначе обрезать и указать в notes |
+| `tree(path, limit=50)` | Дети папки |
+| `sql_query(query, limit=200)` | Read-only (соединение `mode=ro` + запрет всего, кроме `SELECT`/`WITH`/`EXPLAIN`). Описание схемы — в описании инструмента |
+| `start_scan(paths)` / `job_status(job_id)` | Скан — безопасная операция, разрешена |
+| `create_plan(title, note)` | Автор = `ai` |
+| `add_to_plan(plan_id, items: [{path, action, reason, target?}])` | С валидацией F3.2. Возвращает принятые и отклонённые |
+| `get_plan(plan_id)` / `list_plans()` | |
+
+Инструментов выполнения, удаления, перемещения и восстановления **в MCP нет и быть не должно**.
+
+Конфиг для Claude Desktop и Claude Code (вставить в README):
+```json
+{ "mcpServers": { "pc-inspector": {
+    "command": "B:\\Programm\\pc-inspector\\.venv\\Scripts\\python.exe",
+    "args": ["-m", "pcinspector", "mcp"] } } }
+```
+
+### F8. `ai_brief`
+
+Markdown не длиннее ~12 000 символов: таблица дисков, итоги `junk` (safe/review), топ-10 папок первого и второго уровня, топ-10 `forgotten_dirs`, топ-5 групп дубликатов (если есть хэши), топ-10 неиспользуемых программ (если собраны), рост, дата скана и предупреждения об устаревших данных (скан старше 7 дней). Используется и в MCP, и в CLI (`brief`) — чтобы вставить в любой чат.
+
+### F9. Расписание (`scheduler.py`)
+
+`schedule install` создаёт задачу в Планировщике Windows через `schtasks /Create` (без прав админа, от текущего пользователя): еженедельно — `scan` всех настроенных корней → `hash` → `apps` → сохранение `brief` в `data/reports/YYYY-MM-DD.md`. `remove` и `status` работают через `schtasks /Delete` и `/Query`.
+
+---
+
+## 8. Нефункциональные требования
+
+| ID | Требование |
+|---|---|
+| N1 | Отзывчивость UI: любой анализатор на индексе 5 млн файлов отвечает быстрее 3 с (нужные индексы БД). Иначе он запускается как job |
+| N2 | Скан и хэширование не блокируют UI и API (фоновые потоки, `core/jobs.py`) |
+| N3 | Повторный запуск не ломает данные; миграции схемы идемпотентны |
+| N4 | Длинные пути (> 260 символов): сканер работает с ними (на Windows 10 при `LongPathsEnabled`; иначе использовать префикс `\\?\` для операций в executor) |
+| N5 | Юникод в путях (кириллица, эмодзи) поддерживается везде, включая CLI |
+| N6 | Логи: `data/logs/pci.log`, ротация 5×5 МБ. Каждое действие executor логируется |
+| N7 | Никаких сетевых запросов, кроме локального сервера |
+| N8 | Покрытие тестами: `core/safety.py`, `actions/` — 100 % веток; анализаторы — минимум один тест на каждый |
+| N9 | Все модули — с type hints. Docstring модуля объясняет его роль |
+
+---
+
+## 9. Безопасность — инварианты (нарушение = блокирующий баг)
+
+1. **Ничего не удаляется безвозвратно**, кроме явной команды очистки карантина или корзины, которую человек запускает сам.
+2. **ИИ не может изменять файловую систему.** MCP не содержит таких инструментов, анализаторы работают через read-only соединение.
+3. **Защищённые зоны неприкосновенны:** проверка в `core/safety.py` при добавлении в план **и** перед выполнением.
+4. **Выполнение только после подтверждения человека** (токен в UI, `yes`/`--yes` в CLI).
+5. **Проверка актуальности:** файл, изменившийся после анализа, пропускается.
+6. **Откат:** всё, что ушло в карантин или было перемещено, можно вернуть из «Истории».
+7. **Сервер только на localhost**, мутирующие запросы с токеном и проверкой Origin.
+8. `sql_query` не может писать: соединение `mode=ro`, проверка первого ключевого слова, `PRAGMA query_only=ON`.
+
+---
+
+## 10. Тестирование
+
+- `tests/conftest.py`: фикстура `fake_tree(tmp_path)` строит дерево с известными размерами, датами (`os.utime`), `node_modules`, `.venv` с `pyvenv.cfg`, дубликатами, пустыми папками, junction (если можно создать без админа — `mklink /J` через `_winapi.CreateJunction`). Фикстура `index(fake_tree)` сканирует его во временную БД (`PCI_DB` в `tmp_path`).
+- **Тесты никогда не трогают реальные диски и реальную корзину.** Executor в тестах использует карантин в `tmp_path`, а `send2trash` подменяется (monkeypatch).
+- Обязательные тесты:
+  - сканер: суммы размеров, `newest_mtime`, junction не обходится, ошибки доступа не роняют скан;
+  - каждый анализатор: ожидаемые находки на `fake_tree`;
+  - `junk`: вложенные находки не считаются дважды;
+  - safety: защищённые пути, корни дисков и профиль отклоняются; регистр и слеши (`c:/windows`) нормализуются;
+  - executor: изменившийся файл пропускается; карантин → restore возвращает файл байт-в-байт;
+  - API: мутирующий запрос без токена → 403;
+  - MCP: список инструментов не содержит execute/delete; `sql_query("DELETE ...")` → ошибка.
+- Команда: `python -m pytest -q`. Перед коммитом: `ruff check . && ruff format --check .`.
+
+---
+
+## 11. Критерии приёмки (для всего продукта)
+
+1. На машине пользователя полный скан `A:`, `B:`, `C:` завершается без падения, число ошибок отображается.
+2. Главная показывает диски, итоги мусора и топ папок; суммы совпадают с «Свойствами» Проводника в пределах 2 % (разница из-за защищённых и недоступных папок объяснена в UI).
+3. Пользователь проходит С3 + С7: добавляет кэш pip и старые `node_modules` в план, выполняет, видит освобождённое место, откатывает один пункт из «Истории».
+4. Claude (через MCP) по запросу «проанализируй мой ПК и предложи план уборки» вызывает `get_brief`, 2–3 анализатора, создаёт план с обоснованиями. План виден в UI с меткой «ИИ», выполнить его ИИ не может.
+5. Добавление нового анализатора (тестовое задание: `big_logs` — файлы `.log` больше 100 МБ) занимает один файл и одну строку импорта, без правок CLI, API, MCP и фронтенда.
+6. Все тесты зелёные, ruff без ошибок.
