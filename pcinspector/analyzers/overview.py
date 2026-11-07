@@ -12,6 +12,31 @@ from .base import P_LIMIT, P_ROOT, Analyzer, Param, index_path, path_comparison,
 from .rules import category
 
 
+def find_directory(con: sqlite3.Connection, path: str) -> sqlite3.Row | None:
+    """Найти папку, отдавая предпочтение корню отдельного скана."""
+    column, norm = path_comparison("path", index_path(path))
+    return con.execute(
+        f"SELECT * FROM dirs WHERE {column} = ? COLLATE NOCASE ORDER BY depth, id LIMIT 1",
+        (norm,),
+    ).fetchone()
+
+
+def directory_finding(row: sqlite3.Row) -> Finding:
+    return Finding(
+        "dir",
+        row["name"],
+        row["total_size"],
+        row["path"],
+        safety="keep" if row["protected"] else "info",
+        reason=f"{row['total_files']:,} файлов",
+        meta={
+            "files": row["total_files"],
+            "newest_mtime": row["newest_mtime"],
+            "protected": row["protected"],
+        },
+    )
+
+
 @register
 class Roots(Analyzer):
     id = "roots"
@@ -74,11 +99,7 @@ class Tree(Analyzer):
             ).fetchall()
             parent = None
         else:
-            column, norm = path_comparison("path", index_path(path))
-            parent = con.execute(
-                f"SELECT * FROM dirs WHERE {column} = ? COLLATE NOCASE ORDER BY depth, id LIMIT 1",
-                (norm,),
-            ).fetchone()
+            parent = find_directory(con, path)
             if parent is None:
                 rep.notes.append(f"Папка {path} не найдена в индексе (не просканирована?)")
                 return rep
@@ -91,22 +112,7 @@ class Tree(Analyzer):
                 "total_size": parent["total_size"],
                 "total_files": parent["total_files"],
             }
-        for d in rows:
-            rep.findings.append(
-                Finding(
-                    "dir",
-                    d["name"],
-                    d["total_size"],
-                    d["path"],
-                    safety="keep" if d["protected"] else "info",
-                    reason=f"{d['total_files']:,} файлов",
-                    meta={
-                        "files": d["total_files"],
-                        "newest_mtime": d["newest_mtime"],
-                        "protected": d["protected"],
-                    },
-                )
-            )
+        rep.findings = [directory_finding(row) for row in rows]
         if parent is not None and parent["own_files"]:
             rep.findings.append(
                 Finding(
@@ -116,6 +122,7 @@ class Tree(Analyzer):
                     parent["path"],
                     safety="keep" if parent["protected"] else "info",
                     reason=f"{parent['own_files']:,} файлов",
+                    meta={"files": parent["own_files"]},
                 )
             )
             rep.findings.sort(key=lambda f: f.size, reverse=True)

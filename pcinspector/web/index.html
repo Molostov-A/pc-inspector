@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="pci-token" content="__PCI_TOKEN__">
+  <title>PC Inspector</title>
+  <link rel="icon" type="image/svg+xml" href="/css/icon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+  <script defer src="/vendor/echarts.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#/"><span class="mark" aria-hidden="true">◫</span><span>PC Inspector<small>Дисковое пространство</small></span></a>
+    <nav aria-label="Разделы приложения">
+      <a href="#/" data-page="/"><span aria-hidden="true">⌂</span> Главная</a>
+      <a href="#/explorer" data-page="/explorer"><span aria-hidden="true">▤</span> Обзор</a>
+      <a href="#/junk" data-page="/junk"><span aria-hidden="true">◇</span> Мусор</a>
+      <a href="#/analyzers" data-page="/analyzers"><span aria-hidden="true">≡</span> Анализаторы</a>
+    </nav>
+    <div class="sidebar-foot"><span class="local"><i></i> Локальный индекс</span>
+      <label for="theme">Оформление</label>
+      <select id="theme"><option value="auto">Как в системе</option><option value="light">Светлое</option><option value="dark">Тёмное</option></select>
+    </div>
+  </aside>
+  <main>
+    <section id="scan-status" class="scan-status panel" aria-label="Состояние сканирования" hidden></section>
+    <div id="page" aria-live="polite"></div>
+  </main>
+  <dialog id="scan-dialog" aria-labelledby="scan-title">
+    <form id="scan-form">
+      <h2 id="scan-title">Сканировать папки и диски</h2>
+      <p class="muted">Укажите по одному пути на строку. Пустое поле запускает скан всех доступных локальных томов NTFS.</p>
+      <label for="scan-paths">Пути для сканирования</label>
+      <textarea id="scan-paths" rows="4" placeholder="C:\Users\Имя\Documents"></textarea>
+      <p class="error" id="scan-error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" class="secondary" id="scan-close">Закрыть</button>
+        <button type="submit" class="primary" id="scan-submit">Начать сканирование</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

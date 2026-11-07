@@ -100,3 +100,32 @@ def test_lexical_validation_without_windows(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(safety, "os", SimpleNamespace(name="posix", environ=os.environ, fspath=os.fspath))
     monkeypatch.setattr(Path, "home", lambda: Path(r"C:\Users\Tester"))
     safety.validate_action_path(r"C:\Users\Tester\Documents\file")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Проверка локального просмотра Windows")
+def test_local_view_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ctypes
+
+    inspected = []
+
+    def stat_path(path: Path) -> SimpleNamespace:
+        inspected.append(str(path))
+        return SimpleNamespace(st_file_attributes=0x400 if path.name == "junction" else 0)
+
+    monkeypatch.setattr(ctypes.windll.kernel32, "GetDriveTypeW", lambda anchor: 3 if anchor == "R:\\" else 4)
+    monkeypatch.setattr(safety, "os", SimpleNamespace(name="nt", fspath=os.fspath, lstat=stat_path))
+    assert safety.local_path_without_links("R:/folder/file") == r"R:\folder\file"
+    assert inspected == ["R:\\", r"R:\folder", r"R:\folder\file"]
+    for path in ("relative", r"\\server\share\file", r"1:\file", r"S:\file"):
+        with pytest.raises(ValueError, match="локальном диске"):
+            safety.local_path_without_links(path)
+    inspected.clear()
+    with pytest.raises(ValueError, match="точку повторной обработки"):
+        safety.local_path_without_links(r"R:\junction\file")
+    assert inspected == ["R:\\", r"R:\junction"]
+
+
+def test_local_view_requires_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(safety, "os", SimpleNamespace(name="posix"))
+    with pytest.raises(ValueError, match="только в Windows"):
+        safety.local_path_without_links("/path")

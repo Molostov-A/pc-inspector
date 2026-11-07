@@ -5,14 +5,19 @@ from __future__ import annotations
 import math
 import os
 import re
+import sqlite3
+import subprocess
+from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from . import config
 from .analyzers import REGISTRY, get
-from .core import db, jobs, scanner
+from .analyzers.base import index_path, path_comparison
+from .analyzers.overview import directory_finding, find_directory
+from .core import db, jobs, safety, scanner
 from .core.models import Report
 
 
@@ -50,9 +55,39 @@ def list_analyzers() -> list[dict[str, Any]]:
     ]
 
 
+def analyzer_catalog() -> list[dict[str, Any]]:
+    """Добавить JSON Schema к метаданным каждого анализатора."""
+    types = {"int": "integer", "str": "string", "bool": "boolean", "choice": "string"}
+    entries = list_analyzers()
+    for entry in entries:
+        properties = {}
+        for param in entry["params"]:
+            kind = param["type"]
+            schema = {"description": param["help"], "default": param["default"]}
+            if kind == "size":
+                schema["anyOf"] = [{"type": "integer", "minimum": 0}, {"type": "string"}]
+            else:
+                schema["type"] = types[kind]
+            if kind == "choice":
+                schema["enum"] = param["choices"]
+            properties[param["name"]] = schema
+        entry["schema"] = {"type": "object", "properties": properties, "additionalProperties": False}
+    return entries
+
+
+def _read_index(db_path: Path | str | None) -> sqlite3.Connection:
+    path = _db_path(db_path)
+    try:
+        return db.connect(path, readonly=True)
+    except sqlite3.OperationalError:
+        if path.exists():
+            raise
+        return db.empty_index()
+
+
 def run_analyzer(analyzer_id: str, *, db_path: Path | str | None = None, **params: Any) -> Report:
     analyzer = get(analyzer_id)
-    with closing(db.connect(_db_path(db_path), readonly=True)) as con:
+    with closing(_read_index(db_path)) as con:
         return analyzer(con, **params)
 
 
@@ -62,6 +97,108 @@ def list_roots(*, db_path: Path | str | None = None) -> Report:
 
 def tree(path: str, limit: int = 100, *, db_path: Path | str | None = None) -> Report:
     return run_analyzer("tree", path=path, limit=limit, db_path=db_path)
+
+
+def largest_folders(*, db_path: Path | str | None = None) -> Report:
+    """Пять крупнейших дочерних папок просканированных корней."""
+    with closing(_read_index(db_path)) as con:
+        rows = con.execute(
+            "SELECT * FROM dirs WHERE depth = 1 AND total_size > 0 ORDER BY total_size DESC, path LIMIT 5"
+        )
+        return Report("tree", "Крупные папки", findings=[directory_finding(row) for row in rows])
+
+
+def open_in_explorer(path: str, *, db_path: Path | str | None = None) -> None:
+    """Показать в Проводнике существующий путь из индекса."""
+    with closing(_read_index(db_path)) as con:
+        row = find_directory(con, path)
+        if row is None:
+            column, normalized = path_comparison("path", index_path(path))
+            row = con.execute(
+                f"SELECT path FROM files_v WHERE {column} = ? COLLATE NOCASE LIMIT 1",
+                (normalized,),
+            ).fetchone()
+    if row is None:
+        raise FileNotFoundError(path)
+    indexed_path = safety.local_path_without_links(row["path"])
+    subprocess.Popen([str(config.EXPLORER_EXE), "/select,", indexed_path])
+
+
+def list_drives(*, db_path: Path | str | None = None) -> list[dict[str, Any]]:
+    indexed = {item.path.casefold() for item in list_roots(db_path=db_path).findings if item.path}
+    return [{**drive, "scanned": drive["path"].casefold() in indexed} for drive in scanner.local_drives()]
+
+
+class TreemapNode(TypedDict):
+    name: str
+    value: int
+    path: str | None
+    children: list[TreemapNode]
+
+
+def _treemap_children(
+    con: sqlite3.Connection,
+    parent: sqlite3.Row,
+    depth: int,
+) -> list[TreemapNode]:
+    rows = con.execute(
+        "SELECT * FROM dirs WHERE parent_id = ? AND total_size > 0 ORDER BY total_size DESC",
+        (parent["id"],),
+    )
+    return _treemap_nodes(con, rows, parent["total_size"], parent["own_size"], depth)
+
+
+def _treemap_nodes(
+    con: sqlite3.Connection,
+    rows: Iterable[sqlite3.Row],
+    total: int,
+    own: int,
+    depth: int,
+) -> list[TreemapNode]:
+    nodes: list[TreemapNode] = []
+    other = 0
+    for row in rows:
+        size = row["total_size"]
+        if size * 200 < total:
+            other += size
+        else:
+            nodes.append(
+                TreemapNode(
+                    name=row["name"],
+                    value=size,
+                    path=row["path"],
+                    children=_treemap_children(con, row, depth - 1) if depth > 1 else [],
+                )
+            )
+    if own and own * 200 >= total:
+        nodes.append(TreemapNode(name="Файлы в папке", value=own, path=None, children=[]))
+    else:
+        other += own
+    if other:
+        nodes.append(TreemapNode(name="Прочее", value=other, path=None, children=[]))
+    return nodes
+
+
+def treemap(
+    path: str,
+    depth: int = 2,
+    *,
+    db_path: Path | str | None = None,
+) -> list[TreemapNode]:
+    if not 1 <= depth <= 2:
+        raise ValueError("Глубина карты должна быть 1 или 2")
+    with closing(_read_index(db_path)) as con, con:
+        con.execute("BEGIN")
+        if path:
+            parent = find_directory(con, path)
+            return _treemap_children(con, parent, depth) if parent is not None else []
+        roots = con.execute(
+            "SELECT * FROM dirs WHERE parent_id IS NULL AND total_size > 0 ORDER BY total_size DESC"
+        )
+        total = con.execute(
+            "SELECT COALESCE(SUM(total_size), 0) FROM dirs WHERE parent_id IS NULL"
+        ).fetchone()[0]
+        return _treemap_nodes(con, roots, total, 0, depth)
 
 
 def _sql_value(value: Any) -> Any:

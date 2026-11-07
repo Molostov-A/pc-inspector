@@ -31,6 +31,10 @@ def _parser() -> argparse.ArgumentParser:
     scan = commands.add_parser("scan", help="Просканировать указанные папки или локальные диски NTFS")
     scan.add_argument("paths", nargs="*", metavar="PATH")
     _global_options(scan)
+    server = commands.add_parser("serve", help="Запустить локальный веб-интерфейс")
+    server.add_argument("--port", type=int, default=8765, help="Порт локального сервера")
+    server.add_argument("--open", action="store_true", help="Открыть приложение в браузере")
+    _global_options(server)
     listing = commands.add_parser("analyzers", help="Показать список анализаторов")
     _global_options(listing)
     sql = commands.add_parser("sql", help="Выполнить SQL-запрос только для чтения")
@@ -142,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if command == "scan":
             return _scan(args["paths"], db_path, as_json)
+        if command == "serve":
+            from .api.app import serve
+
+            serve(args["port"], args["open"], db_path)
+            return 0
         if command == "analyzers":
             analyzers = services.list_analyzers()
             if as_json:

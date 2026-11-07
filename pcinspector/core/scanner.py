@@ -16,7 +16,7 @@ from threading import Event
 from typing import TypedDict
 
 from . import db
-from .safety import is_protected
+from .safety import is_protected, local_path_without_links
 
 REPARSE = stat.FILE_ATTRIBUTE_REPARSE_POINT
 CLOUD = stat.FILE_ATTRIBUTE_OFFLINE | 0x400000
@@ -44,6 +44,14 @@ class ScanResult(TypedDict):
     seconds: float
 
 
+class Drive(TypedDict):
+    path: str
+    label: str
+    filesystem: str
+    total: int | None
+    free: int | None
+
+
 @dataclass(slots=True)
 class _Directory:
     parent: int | None
@@ -67,6 +75,11 @@ def normalize_root(path: str) -> str:
 
 def local_ntfs_roots() -> list[str]:
     """Перечислить доступные локальные тома NTFS для скана без аргументов."""
+    return [drive["path"] for drive in local_drives() if drive["filesystem"] == "NTFS"]
+
+
+def local_drives() -> list[Drive]:
+    """Собрать метки и ёмкость доступных локальных томов Windows."""
     if os.name != "nt":
         return []
 
@@ -77,17 +90,26 @@ def local_ntfs_roots() -> list[str]:
     if not drives:
         raise ctypes.WinError(ctypes.get_last_error())
     filesystem = ctypes.create_unicode_buffer(32)
-    roots = []
+    label = ctypes.create_unicode_buffer(261)
+    result: list[Drive] = []
     for index in range(26):
         path = chr(ord("A") + index) + ":\\"
         if (
             drives & (1 << index)
             and kernel.GetDriveTypeW(path) in (2, 3)
-            and kernel.GetVolumeInformationW(path, None, 0, None, None, None, filesystem, len(filesystem))
-            and filesystem.value == "NTFS"
+            and kernel.GetVolumeInformationW(
+                path, label, len(label), None, None, None, filesystem, len(filesystem)
+            )
         ):
-            roots.append(path)
-    return roots
+            try:
+                usage = shutil.disk_usage(path)
+                total, free = usage.total, usage.free
+            except OSError:
+                total = free = None
+            result.append(
+                Drive(path=path, label=label.value, filesystem=filesystem.value, total=total, free=free)
+            )
+    return result
 
 
 def _exclude_paths(con: sqlite3.Connection, root: str) -> set[str]:
@@ -122,6 +144,8 @@ def scan(
 ) -> ScanResult:
     """Просканировать один корень, сохранив прежние данные при ошибке или отмене."""
     root = normalize_root(root)
+    if os.name == "nt":
+        local_path_without_links(root)
     root_info = os.lstat(root)
     if _is_link(root_info) or not stat.S_ISDIR(root_info.st_mode):
         raise ValueError(f"Корень сканирования должен быть обычной папкой: {root}")

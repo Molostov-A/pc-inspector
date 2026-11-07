@@ -40,6 +40,16 @@ def connect(db_path: Path | str = DEFAULT_DB, readonly: bool = False) -> sqlite3
     return con
 
 
+def empty_index() -> sqlite3.Connection:
+    """Открыть пустой индекс в памяти для отчётов до первого сканирования."""
+    con = sqlite3.connect(":memory:")
+    migrations.migrate(con)
+    con.row_factory = sqlite3.Row
+    con.create_function("pci_casefold", 1, str.casefold, deterministic=True)
+    con.execute("PRAGMA query_only=ON")
+    return con
+
+
 def drop_indexes(con: sqlite3.Connection) -> None:
     for stmt in INDEXES:
         name = stmt.split()[5]

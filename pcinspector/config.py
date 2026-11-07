@@ -17,6 +17,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 DB_PATH = Path(os.environ.get("PCI_DB", DATA_DIR / "index.db"))
 QUARANTINE_DIR = Path(os.environ.get("PCI_QUARANTINE", DATA_DIR / "quarantine"))
+EXPLORER_EXE = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "explorer.exe"
 
 
 def configure_logging() -> None:

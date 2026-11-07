@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import stat
 import string
 from pathlib import Path, PureWindowsPath
 
@@ -102,3 +103,25 @@ def validate_action_path(path: str | os.PathLike[str]) -> None:
         except (OSError, RuntimeError) as ex:
             raise ValueError("Не удалось проверить фактический путь") from ex
         _validate(_windows_path(resolved))
+
+
+def local_path_without_links(path: str) -> str:
+    """Проверить путь Windows, не переходя по ссылкам и на сетевые тома."""
+    if os.name != "nt":
+        raise ValueError("Проверка локальных томов доступна только в Windows")
+
+    import ctypes
+
+    candidate = _windows_path(path)
+    if (
+        not candidate.is_absolute()
+        or len(candidate.drive) != 2
+        or candidate.drive[0] not in string.ascii_letters
+        or ctypes.windll.kernel32.GetDriveTypeW(candidate.anchor) not in (2, 3)
+    ):
+        raise ValueError("Укажите путь на локальном диске")
+    for part in (*reversed(candidate.parents), candidate):
+        info = os.lstat(part)
+        if info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("Путь проходит через точку повторной обработки")
+    return str(candidate)
