@@ -67,14 +67,15 @@ class ForgottenDirs(Analyzer):
         rep = Report(self.id, self.title, notes=["Учитывается дата изменения файлов (mtime)."])
         cutoff = time.time() - days * DAY
         cond, args = root_filter("d.path", root)
+        parent_cond, parent_args = root_filter("p.path", root)
         sql = f"""
             SELECT d.* FROM dirs d LEFT JOIN dirs p ON p.id = d.parent_id
             WHERE d.depth > 0 AND d.protected = 0 AND d.total_size >= ? AND d.newest_mtime < ?
               AND NOT (p.depth > 0 AND p.protected = 0 AND p.total_size >= ?
-                       AND COALESCE(p.newest_mtime, 0) < ?)
+                       AND p.newest_mtime < ? AND {parent_cond})
               AND {cond}
             ORDER BY d.total_size DESC LIMIT ?"""
-        for d in con.execute(sql, (min_size, cutoff, min_size, cutoff, *args, limit)):
+        for d in con.execute(sql, (min_size, cutoff, min_size, cutoff, *parent_args, *args, limit)):
             rep.findings.append(
                 Finding(
                     "dir",

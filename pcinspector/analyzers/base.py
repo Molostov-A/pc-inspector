@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from ..core.fmt import parse_size
 from ..core.models import Report
@@ -21,19 +22,33 @@ from ..core.models import Report
 @dataclass(frozen=True)
 class Param:
     name: str
-    type: str  # "int" | "str" | "size" | "bool"
+    type: Literal["int", "str", "size", "bool", "choice"]
     default: Any
     help: str
+    choices: tuple[str, ...] = ()
 
     def coerce(self, value: Any) -> Any:
         if value is None:
-            return self.default
+            value = self.default
         if self.type == "int":
-            return int(value)
+            number = int(value)
+            if number < (1 if self.name == "limit" else 0):
+                raise ValueError(f"{self.name}: недопустимое значение {number}")
+            return number
         if self.type == "size":
-            return parse_size(value)
+            size = parse_size(value)
+            if size < 0:
+                raise ValueError(f"{self.name}: размер должен быть неотрицательным")
+            return size
         if self.type == "bool":
-            return value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes")
+            flag = str(value).lower()
+            if flag in ("1", "true", "yes"):
+                return True
+            if flag in ("0", "false", "no"):
+                return False
+            raise ValueError(f"{self.name}: ожидается true или false")
+        if self.type == "choice" and value not in self.choices:
+            raise ValueError(f"{self.name}: выберите одно из значений: {', '.join(self.choices)}")
         return str(value)
 
 
@@ -81,12 +96,25 @@ P_ROOT = Param("root", "str", "", "Ограничить путём (префик
 P_MIN_SIZE = Param("min_size", "size", "100M", "Минимальный размер: 500K, 100M, 2G")
 
 
+def index_path(path: str) -> str:
+    if os.name == "nt" and len(path) == 2 and path[1] == ":":
+        path += "\\"
+    return os.path.normpath(path)
+
+
+def path_comparison(column: str, path: str) -> tuple[str, str]:
+    if path.isascii():
+        return column, path
+    return f"pci_casefold({column})", path.casefold()
+
+
 def root_filter(column: str, root: str) -> tuple[str, list[Any]]:
     """SQL-условие «путь внутри root» (без учёта регистра). Пустой root — без фильтра."""
     if not root:
         return "1=1", []
-    root = root.rstrip("\\")
+    column, root = path_comparison(column, index_path(root))
+    prefix = root if root.endswith(os.sep) else root + os.sep
     return (
         f"({column} = ? COLLATE NOCASE OR {column} LIKE ? ESCAPE '|')",
-        [root, root.replace("|", "||").replace("%", "|%").replace("_", "|_") + "\\%"],
+        [root, prefix.replace("|", "||").replace("%", "|%").replace("_", "|_") + "%"],
     )

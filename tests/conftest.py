@@ -46,5 +46,5 @@ def index(fake_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     db_path = tmp_path / "index.db"
     monkeypatch.setenv("PCI_DB", str(db_path))
     with closing(db.connect(db_path)) as con:
-        scanner.scan(str(fake_tree), con, progress=False)
+        scanner.scan(str(fake_tree), con)
     return db_path

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from collections import defaultdict
+from datetime import datetime
 from typing import ClassVar
 
 from ..core.models import Finding, Report
-from .base import P_LIMIT, P_ROOT, Analyzer, Param, register, root_filter
+from .base import P_LIMIT, P_ROOT, Analyzer, Param, index_path, path_comparison, register, root_filter
 from .rules import category
 
 
@@ -26,20 +26,31 @@ class Roots(Analyzer):
         for r in con.execute("SELECT * FROM roots ORDER BY path"):
             meta = dict(r)
             try:
-                du = shutil.disk_usage(r["path"])
-                meta.update(disk_total=du.total, disk_free=du.free)
-            except OSError:
-                pass
+                meta["scanned_at"] = float(r["scanned_at"])
+            except (ValueError, TypeError):
+                if r["scanned_at"]:
+                    meta["scanned_at"] = datetime.fromisoformat(r["scanned_at"]).timestamp()
             rep.findings.append(
                 Finding(
                     "stat",
                     r["path"],
                     r["total_size"] or 0,
                     r["path"],
-                    reason=f"просканировано {r['scanned_at']}",
+                    reason=f"{r['file_count'] or 0:,} файлов",
                     meta=meta,
                 )
             )
+            if meta.get("system_files"):
+                rep.findings.append(
+                    Finding(
+                        "group",
+                        "Системные файлы",
+                        meta["system_size"],
+                        safety="keep",
+                        reason=r["path"],
+                        meta={"root": r["path"], "count": meta["system_files"]},
+                    )
+                )
         if not rep.findings:
             rep.notes.append("Индекс пуст. Запустите: python -m pcinspector scan C:\\")
         return rep
@@ -59,14 +70,15 @@ class Tree(Analyzer):
         rep = Report(self.id, self.title)
         if not path:
             rows = con.execute(
-                "SELECT * FROM dirs WHERE parent_id IS NULL ORDER BY total_size DESC"
+                "SELECT * FROM dirs WHERE parent_id IS NULL ORDER BY total_size DESC LIMIT ?", (limit,)
             ).fetchall()
             parent = None
         else:
-            norm = path if len(path.rstrip("\\")) <= 2 else path.rstrip("\\")
-            if len(norm) == 2:
-                norm += "\\"
-            parent = con.execute("SELECT * FROM dirs WHERE path = ? COLLATE NOCASE", (norm,)).fetchone()
+            column, norm = path_comparison("path", index_path(path))
+            parent = con.execute(
+                f"SELECT * FROM dirs WHERE {column} = ? COLLATE NOCASE ORDER BY depth, id LIMIT 1",
+                (norm,),
+            ).fetchone()
             if parent is None:
                 rep.notes.append(f"Папка {path} не найдена в индексе (не просканирована?)")
                 return rep
@@ -102,6 +114,7 @@ class Tree(Analyzer):
                     "[файлы в самой папке]",
                     parent["own_size"],
                     parent["path"],
+                    safety="keep" if parent["protected"] else "info",
                     reason=f"{parent['own_files']:,} файлов",
                 )
             )
@@ -148,7 +161,11 @@ class FileTypes(Analyzer):
     id = "types"
     title = "Занятое место по типам файлов"
     description = "Сумма размеров по категориям (видео, архивы, модели ИИ...) и по расширениям."
-    params: ClassVar[list[Param]] = [P_ROOT, Param("by", "str", "category", "category | ext"), P_LIMIT]
+    params: ClassVar[list[Param]] = [
+        P_ROOT,
+        Param("by", "choice", "category", "Группировка", ("category", "ext")),
+        P_LIMIT,
+    ]
 
     def run(self, con: sqlite3.Connection, root: str, by: str, limit: int) -> Report:
         rep = Report(self.id, self.title)
@@ -177,7 +194,7 @@ class FileTypes(Analyzer):
             c[0] += r["s"] or 0
             c[1] += r["n"]
             c[2].append((r["s"] or 0, r["ext"]))
-        for name, (size, n, exts) in sorted(cats.items(), key=lambda kv: kv[1][0], reverse=True):
+        for name, (size, n, exts) in sorted(cats.items(), key=lambda kv: kv[1][0], reverse=True)[:limit]:
             top = ", ".join(e or "—" for _, e in sorted(exts, reverse=True)[:5])
             rep.findings.append(
                 Finding("group", name, size, category=name, reason=f"{n:,} файлов; {top}", meta={"count": n})

@@ -19,18 +19,25 @@
 индекс временного дерева и запись с ротацией журнала. Обе проверки Ruff прошли.
 
 ## Этап 1. Сканер + базовые анализаторы + CLI
-- [ ] `core/migrations.py`: `PRAGMA user_version`, миграция v1 = текущая схема (N3)
-- [ ] `core/safety.py`: список защищённых зон, `is_protected(path)`, `validate_action_path(path)` + тесты (F1.4, F3.2)
-- [ ] Довести `core/scanner.py`: тесты сумм, `newest_mtime`, junction, ошибки доступа (F1.1–F1.6)
-- [ ] Исключения `pagefile.sys` и т. п., пометка облачных заглушек (F1.9, F1.10)
-- [ ] `core/jobs.py`: фоновые задачи с прогрессом и отменой; атомарная замена данных корня (F1.7, F1.8)
-- [ ] Проверить и покрыть тестами анализаторы `roots, tree, top_files, types, stale_files, forgotten_dirs, junk` (F2)
-- [ ] Тип параметра `choice` в `analyzers/base.py`
-- [ ] `services.py`: `list_roots, start_scan, job_status, list_analyzers, run_analyzer, tree, sql_readonly`
-- [ ] `cli.py`: `scan`, `analyzers`, авто-подкоманды анализаторов, `sql`, `--json`, `--db`, табличный вывод (F4)
+- [x] `core/migrations.py`: `PRAGMA user_version`, миграция v1 = текущая схема черновика (N3)
+- [x] `core/safety.py`: список защищённых зон, `is_protected(path)`, `validate_action_path(path)` + тесты (F1.4, F3.2)
+- [x] Довести `core/scanner.py`: тесты сумм, `newest_mtime`, junction, ошибки доступа (F1.1–F1.6)
+- [x] Исключения `pagefile.sys` и т. п., пометка облачных заглушек (F1.9, F1.10)
+- [x] `core/jobs.py`: фоновые задачи с прогрессом и отменой; атомарная замена данных корня (F1.7, F1.8)
+- [x] Проверить и покрыть тестами анализаторы `roots, tree, top_files, types, stale_files, forgotten_dirs, junk` (F2)
+- [x] Тип параметра `choice` в `analyzers/base.py`
+- [x] `services.py`: `list_roots, start_scan, job_status, list_analyzers, run_analyzer, tree, sql_readonly`
+- [x] `cli.py`: `scan`, `analyzers`, авто-подкоманды анализаторов, `sql`, `--json`, `--db`, табличный вывод (F4)
 - [ ] Замер производительности на `B:\Programm` и на `C:\`; записать цифры в DECISIONS.md (F1.12)
 
 **Приёмка:** `python -m pcinspector scan C:\ B:\ A:\` завершается; `junk`, `tree C:\Users`, `types`, `forgotten_dirs` дают осмысленный результат; `--json` валиден.
+
+**Результат 2026-11-07.** Скан трёх временных корней завершён. `junk`, `tree`, `types` и
+`forgotten_dirs` вернули ожидаемые находки и валидный JSON. Файл с путём в 358 символов попал в индекс.
+Результат pytest — 53 успешных теста, один пропущен. `core/safety.py` покрыт по ветвям на 100 %.
+Среда не позволила создать реальный junction во временной папке. Поведение для атрибута reparse
+проверено подстановкой. Замеры на временных деревьях записаны в DECISIONS. Прогон на `C:\ B:\ A:\`,
+замеры на `B:\Programm` и `C:\` и проверка лимита памяти на 5 млн файлов остаются открытыми.
 
 ## Этап 2. Веб-интерфейс (только просмотр)
 - [ ] `api/app.py`: FastAPI, привязка к 127.0.0.1, токен и проверка Origin, статика `web/` (F5, §9.7)

@@ -274,20 +274,26 @@ Report:
 
 ### 6.2. Схема SQLite
 
-Текущая (версия 1, реализована в `core/db.py`): `roots`, `dirs`, `files`, `errors`, представление `files_v`.
+Версия 1 (`core/migrations.py`): `roots`, `dirs`, `files`, `errors`, представление `files_v`.
+Неверсионированная база черновика обновляется с сохранением данных.
 
 Ключевые поля:
 - `dirs`: `id, root_id, parent_id, path, name, depth, own_size, own_files, total_size, total_files, mtime, newest_mtime, protected`;
 - `files`: `id, root_id, dir_id, name, ext, size, mtime, atime, ctime` (полный путь = `dirs.path + '\' + name`, через `files_v`).
 
-**Добавить** (миграции v2+ в `core/migrations.py`, версия хранится в `PRAGMA user_version`):
+Дополнения версии 2 (`PRAGMA user_version`).
+
+- `files.attrs` и `files_v.attrs` для атрибутов Windows. Размер облачной заглушки в индексе равен нулю.
+- `roots.system_size, system_files` для отдельной строки «Системные файлы» и
+  `roots.disk_total, disk_free` для ёмкости и свободного места на момент скана.
+- `settings(key, value)` для JSON-настроек, в том числе `exclude_paths`.
+
+**Запланированные поля и таблицы** (версии миграций присваиваются в порядке этапов):
 
 ```sql
--- v2: доп. атрибуты файлов
-ALTER TABLE files ADD COLUMN attrs INTEGER;          -- st_file_attributes (hidden, system, offline/cloud)
 ALTER TABLE files ADD COLUMN alloc_size INTEGER;     -- размер на диске (опционально, этап 6)
 
--- v2: история сканов для «что выросло»
+-- История сканов для «что выросло» (этап 7)
 CREATE TABLE snapshots (
   id INTEGER PRIMARY KEY, root_id INTEGER, taken_at TEXT,
   total_size INTEGER, file_count INTEGER
@@ -296,7 +302,7 @@ CREATE TABLE snapshot_dirs (                          -- только папки
   snapshot_id INTEGER, path TEXT, total_size INTEGER, total_files INTEGER
 );
 
--- v3: хэши
+-- Хэши (этап 5)
 CREATE TABLE file_hashes (
   path TEXT PRIMARY KEY COLLATE NOCASE,               -- путь, а не file_id: id меняются при пересканировании
   size INTEGER, mtime REAL,                            -- если изменились — хэш недействителен
@@ -304,7 +310,7 @@ CREATE TABLE file_hashes (
   full_hash TEXT
 );
 
--- v4: программы
+-- Программы (этап 6)
 CREATE TABLE apps (
   id INTEGER PRIMARY KEY,
   source TEXT,              -- 'hklm' | 'hklm_wow' | 'hkcu' | 'appx'
@@ -321,7 +327,7 @@ CREATE TABLE app_usage (
   source TEXT                -- 'prefetch' | 'userassist' | 'exe_atime'
 );
 
--- v5: планы и журнал
+-- Планы и журнал (этап 4)
 CREATE TABLE plans (
   id INTEGER PRIMARY KEY, title TEXT, author TEXT,     -- 'user' | 'ai'
   note TEXT, created_at TEXT, status TEXT              -- draft | executed | partially | cancelled
@@ -340,10 +346,11 @@ CREATE TABLE actions_log (
   action TEXT, src TEXT, dst TEXT, size INTEGER,
   restorable INTEGER, restored_at TEXT
 );
-CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);  -- JSON-значения
 ```
 
-Пересканирование корня удаляет и пересоздаёт его строки в `dirs` и `files`. Перед этим сохраняется снимок (`snapshots`). Таблицы `file_hashes`, `apps`, `plans` и `actions_log` при пересканировании **не удаляются**.
+Пересканирование корня атомарно заменяет его строки в `dirs` и `files`. С этапа 7 перед заменой
+сохраняется снимок (`snapshots`). Таблицы `file_hashes`, `apps`, `plans` и `actions_log` при
+пересканировании **не удаляются**.
 
 ---
 

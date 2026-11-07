@@ -1,37 +1,126 @@
-"""Поиск мусора по правилам из rules.py: кэши, временные файлы, зависимости, дампы."""
+"""Поиск кэшей, временных файлов и других кандидатов по правилам из rules.py."""
 
 from __future__ import annotations
 
+import heapq
+import os
 import sqlite3
-from typing import ClassVar
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 from ..core.models import Finding, Report
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, register, root_filter
 from .rules import DIR_NAME_RULES, DIR_PATH_RULES, FILE_RULES
 
+RULES = (*DIR_NAME_RULES, *DIR_PATH_RULES, *FILE_RULES)
+DIR_COLUMNS = "d.path, d.name, d.total_size AS size, d.newest_mtime AS mtime, d.total_files AS files"
 
-def _drop_nested(findings: list[Finding]) -> list[Finding]:
-    """Если папка уже найдена, вложенные в неё находки не считаем повторно."""
-    out: list[Finding] = []
-    kept: list[str] = []
-    for f in sorted(findings, key=lambda f: (f.path or "").lower()):
-        p = (f.path or "").lower()
-        if any(p == k or p.startswith(k + "\\") for k in kept):
+
+@dataclass
+class _Total:
+    size: int = 0
+    count: int = 0
+    top: list[tuple[int, int, Finding]] = field(default_factory=list)
+
+    def add(self, item: Finding, limit: int) -> None:
+        self.size += item.size
+        self.count += 1
+        entry = (item.size, -self.count, item)
+        if len(self.top) < limit:
+            heapq.heappush(self.top, entry)
+        else:
+            heapq.heappushpop(self.top, entry)
+
+    def largest(self) -> list[Finding]:
+        return [entry[2] for entry in sorted(self.top, reverse=True)]
+
+
+def _candidates(con: sqlite3.Connection, root: str, min_size: int) -> Iterator[tuple[int, Finding]]:
+    queries: list[str] = []
+    args: list[Any] = []
+    dir_condition, dir_args = root_filter("d.path", root)
+    file_condition, file_args = root_filter("path", root)
+    directory_query = (
+        f"SELECT ? AS rule, 1 AS is_dir, {DIR_COLUMNS} FROM dirs d "
+        f"WHERE d.protected = 0 AND d.total_size >= ? AND {dir_condition}"
+    )
+
+    for index, rule in enumerate(RULES):
+        if "exts" in rule:
+            marks = ",".join("?" * len(rule["exts"]))
+            sql = (
+                "SELECT ? AS rule, 0 AS is_dir, path, name, size, mtime, NULL AS files FROM files_v "
+                f"WHERE protected = 0 AND size >= ? AND size > 0 AND {file_condition} "
+                f"AND ext IN ({marks}) AND path LIKE ?"
+            )
+            values = [index, min_size, *file_args, *rule["exts"], rule["dir_like"]]
+        else:
+            sql = directory_query
+            values = [index, min_size, *dir_args]
+            if "like" in rule:
+                sql += " AND d.path LIKE ?"
+                values.append(rule["like"])
+            else:
+                marks = ",".join("?" * len(rule["names"]))
+                sql += f" AND d.name COLLATE NOCASE IN ({marks})"
+                values.extend(rule["names"])
+            if "path_like" in rule:
+                sql += " AND d.path LIKE ?"
+                values.append(rule["path_like"])
+            if "require_file" in rule:
+                sql += (
+                    " AND EXISTS (SELECT 1 FROM files f WHERE f.dir_id = d.id AND f.name = ? COLLATE NOCASE)"
+                )
+                values.append(rule["require_file"])
+            if "sibling_ext" in rule:
+                marks = ",".join("?" * len(rule["sibling_ext"]))
+                sql += (
+                    f" AND EXISTS (SELECT 1 FROM files f WHERE f.dir_id = d.parent_id AND f.ext IN ({marks}))"
+                )
+                values.extend(rule["sibling_ext"])
+        queries.append(sql)
+        args.extend(values)
+
+    # Разделитель сортируется раньше символов имён: поддерево идёт сразу после своей папки.
+    union = " UNION ALL ".join(queries)
+    rows = con.execute(
+        f"SELECT * FROM ({union}) ORDER BY replace(pci_casefold(path), ?, char(1)), rule, size DESC",
+        (*args, os.sep),
+    )
+    previous = prefix = ""
+    for row in rows:
+        path = row["path"].casefold()
+        if path == previous or (prefix and path.startswith(prefix)):
             continue
-        out.append(f)
-        if f.kind == "dir":
-            kept.append(p.rstrip("\\"))
-    return out
+        previous = path
+        rule = RULES[row["rule"]]
+        meta = {"hint": rule["hint"]}
+        if row["is_dir"]:
+            prefix = path.rstrip(os.sep) + os.sep
+            meta.update(files=row["files"], newest_mtime=row["mtime"])
+        else:
+            meta["mtime"] = row["mtime"]
+        yield (
+            row["rule"],
+            Finding(
+                "dir" if row["is_dir"] else "file",
+                row["name"],
+                row["size"],
+                row["path"],
+                safety=rule["safety"],
+                category=rule["id"],
+                reason=rule["title"],
+                meta=meta,
+            ),
+        )
 
 
 @register
 class Junk(Analyzer):
     id = "junk"
     title = "Мусор: кэши, временные файлы, зависимости"
-    description = (
-        "Находит кэши, временные файлы, node_modules, .venv, артефакты сборки, дампы, "
-        "установщики в Загрузках. У каждой находки safety: safe (можно удалять) или review."
-    )
+    description = "Находит кэши, временные файлы, зависимости, дампы и установщики в Загрузках."
     params: ClassVar[list[Param]] = [
         P_ROOT,
         Param("min_size", "size", "1M", "Не показывать находки меньше"),
@@ -40,92 +129,34 @@ class Junk(Analyzer):
     ]
 
     def run(self, con: sqlite3.Connection, root: str, min_size: int, limit: int, group: bool) -> Report:
-        found: list[Finding] = []
-        rcond, rargs = root_filter("d.path", root)
+        report = Report(self.id, self.title, summary={"safe_size": 0, "review_size": 0, "items": 0})
+        flat = _Total()
+        groups: dict[int, _Total] = {}
+        for index, item in _candidates(con, root, min_size):
+            report.summary[f"{item.safety}_size"] += item.size
+            report.summary["items"] += 1
+            if group:
+                groups.setdefault(index, _Total()).add(item, 10)
+            else:
+                flat.add(item, limit)
 
-        for rule in DIR_NAME_RULES:
-            marks = ",".join("?" * len(rule["names"]))
-            sql = f"SELECT d.* FROM dirs d WHERE d.name COLLATE NOCASE IN ({marks}) AND {rcond}"
-            args: list = [*rule["names"], *rargs]
-            if "path_like" in rule:
-                sql += " AND d.path LIKE ?"
-                args.append(rule["path_like"])
-            if "require_file" in rule:
-                sql += (
-                    " AND EXISTS (SELECT 1 FROM files f WHERE f.dir_id = d.id AND f.name = ? COLLATE NOCASE)"
-                )
-                args.append(rule["require_file"])
-            if "sibling_ext" in rule:
-                m = ",".join("?" * len(rule["sibling_ext"]))
-                sql += f" AND EXISTS (SELECT 1 FROM files f WHERE f.dir_id = d.parent_id AND f.ext IN ({m}))"
-                args.extend(rule["sibling_ext"])
-            for d in con.execute(sql, args):
-                found.append(self._dir(d, rule))
-
-        for rule in DIR_PATH_RULES:
-            sql = f"SELECT d.* FROM dirs d WHERE d.path LIKE ? AND {rcond}"
-            for d in con.execute(sql, (rule["like"], *rargs)):
-                found.append(self._dir(d, rule))
-
-        fcond, fargs = root_filter("path", root)
-        for rule in FILE_RULES:
-            m = ",".join("?" * len(rule["exts"]))
-            sql = f"SELECT * FROM files_v WHERE ext IN ({m}) AND path LIKE ? AND size > 0 AND {fcond}"
-            for f in con.execute(sql, (*rule["exts"], rule["dir_like"], *fargs)):
-                found.append(
-                    Finding(
-                        "file",
-                        f["name"],
-                        f["size"],
-                        f["path"],
-                        safety=rule["safety"],
-                        category=rule["id"],
-                        reason=rule["title"],
-                        meta={"mtime": f["mtime"], "hint": rule["hint"]},
-                    )
-                )
-
-        found = [f for f in _drop_nested(found) if f.size >= min_size]
-        rep = Report(self.id, self.title)
-        rep.summary = {
-            "safe_size": sum(f.size for f in found if f.safety == "safe"),
-            "review_size": sum(f.size for f in found if f.safety == "review"),
-            "items": len(found),
-        }
         if not group:
-            rep.findings = sorted(found, key=lambda f: f.size, reverse=True)[:limit]
-            return rep
-
-        rules = {r["id"]: r for r in (*DIR_NAME_RULES, *DIR_PATH_RULES, *FILE_RULES)}
-        groups: dict[str, list[Finding]] = {}
-        for f in found:
-            groups.setdefault(f.category or "", []).append(f)
-        for rid, items in groups.items():
-            rule = rules[rid]
-            items.sort(key=lambda f: f.size, reverse=True)
-            rep.findings.append(
+            report.findings = flat.largest()
+            return report
+        for index, total in sorted(groups.items(), key=lambda pair: pair[1].size, reverse=True)[:limit]:
+            rule = RULES[index]
+            report.findings.append(
                 Finding(
                     "group",
                     rule["title"],
-                    sum(f.size for f in items),
+                    total.size,
                     safety=rule["safety"],
-                    category=rid,
-                    reason=f"{len(items)} шт. — {rule['hint']}",
-                    meta={"count": len(items), "top": [{"path": f.path, "size": f.size} for f in items[:10]]},
+                    category=rule["id"],
+                    reason=f"{total.count} шт. — {rule['hint']}",
+                    meta={
+                        "count": total.count,
+                        "top": [{"path": item.path, "size": item.size} for item in total.largest()],
+                    },
                 )
             )
-        rep.findings.sort(key=lambda f: f.size, reverse=True)
-        return rep
-
-    @staticmethod
-    def _dir(d: sqlite3.Row, rule: dict) -> Finding:
-        return Finding(
-            "dir",
-            d["name"],
-            d["total_size"],
-            d["path"],
-            safety=rule["safety"],
-            category=rule["id"],
-            reason=rule["title"],
-            meta={"files": d["total_files"], "newest_mtime": d["newest_mtime"], "hint": rule["hint"]},
-        )
+        return report
