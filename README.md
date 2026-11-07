@@ -14,7 +14,8 @@
 
 ## Веб-интерфейс
 
-Запустите сервер из папки проекта в PowerShell.
+Дважды щёлкните [start-web.bat](start-web.bat) в папке проекта. Батник запустит сервер
+из `.venv` и откроет браузер. Для запуска вручную выполните из папки проекта в PowerShell
 
 ```powershell
 .\.venv\Scripts\python.exe -m pcinspector serve --open

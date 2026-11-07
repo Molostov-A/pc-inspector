@@ -1,1 +1,2 @@
 pcinspector/web/vendor/* -text
+start-web.bat text eol=crlf
