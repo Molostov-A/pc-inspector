@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -17,7 +18,24 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 DB_PATH = Path(os.environ.get("PCI_DB", DATA_DIR / "index.db"))
 QUARANTINE_DIR = Path(os.environ["PCI_QUARANTINE"]) if os.environ.get("PCI_QUARANTINE") else None
-EXPLORER_EXE = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "explorer.exe"
+WINDOWS_DIR = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+EXPLORER_EXE = WINDOWS_DIR / "explorer.exe"
+
+
+def expand_windows_vars(text: str) -> str:
+    return ntpath.expandvars(text)
+
+
+def app_data_roots() -> dict[str, str]:
+    return {
+        name: os.environ.get(name, fallback)
+        for name, fallback in (
+            ("APPDATA", ""),
+            ("LOCALAPPDATA", ""),
+            ("PROGRAMDATA", str(Path(WINDOWS_DIR.anchor) / "ProgramData")),
+        )
+        if os.environ.get(name, fallback)
+    }
 
 
 def configure_logging() -> None:

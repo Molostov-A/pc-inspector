@@ -7,6 +7,35 @@ safety:
 
 from __future__ import annotations
 
+APP_LEFTOVER_SYSTEM_NAMES = frozenset(
+    {
+        "Microsoft",
+        "Packages",
+        "Temp",
+        "Programs",
+        "Windows",
+        "Application Data",
+        "Local Settings",
+        "Start Menu",
+        "Desktop",
+        "Documents",
+        "Favorites",
+        "Templates",
+        "ConnectedDevicesPlatform",
+        "Comms",
+        "CrashDumps",
+        "D3DSCache",
+        "VirtualStore",
+        "Package Cache",
+        "USOPrivate",
+        "USOShared",
+        "SoftwareDistribution",
+        "DeliveryOptimization",
+        "regid.1991-06.com.microsoft",
+        "Microsoft Help",
+    }
+)
+
 CATEGORIES: dict[str, set[str]] = {
     "Видео": {"mp4", "mkv", "avi", "mov", "wmv", "webm", "flv", "m4v", "ts", "mts", "m2ts", "vob"},
     "Аудио": {"mp3", "flac", "wav", "ogg", "m4a", "aac", "wma", "opus", "aiff"},

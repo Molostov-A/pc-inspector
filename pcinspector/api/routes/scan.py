@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ... import services
-from ..schemas import HashRequest, ScanCancelled, ScanRequest, ScanStarted
+from ..schemas import HashRequest, ScanCancelled, ScanRequest, ScanStarted, UninstallRequest
 
 router = APIRouter(prefix="/api")
 
@@ -23,6 +23,17 @@ def start_hash(body: HashRequest, request: Request) -> ScanStarted:
     return ScanStarted(
         job_id=services.start_hash(body.root, body.min_size, db_path=request.app.state.db_path)
     )
+
+
+@router.post("/apps/collect", status_code=202)
+def collect_apps(request: Request) -> ScanStarted:
+    return ScanStarted(job_id=services.collect_apps(db_path=request.app.state.db_path))
+
+
+@router.post("/apps/{app_id}/uninstall")
+def open_uninstaller(app_id: int, body: UninstallRequest, request: Request) -> dict[str, bool]:
+    services.open_uninstaller(app_id, confirmed=body.confirmed, db_path=request.app.state.db_path)
+    return {"opened": True}
 
 
 @router.get("/jobs/{job_id}")

@@ -299,6 +299,12 @@ mtime, контрольная сумма метаданных поддерева
 `partial_hash` и `full_hash`. Последний может отсутствовать. `hash_runs` хранит время начала
 проверки и число ошибок для каждого сочетания корня и минимального размера.
 
+Версия 5 добавляет `apps` и `app_usage`. `apps` хранит источник и ключ реестра, название,
+издателя, версию, дату установки, папку установки, DisplayIcon, оценочный и измеренный размеры,
+UninstallString и QuietUninstallString. В `app_usage` хранится последний признак по каждому
+источнику для каждой программы с именем и путём EXE, временем и счётчиком запусков.
+Настройка `apps_collection` содержит дату сбора, примечания, признак полноты и корни AppData.
+
 **Запланированные поля и таблицы** (версии миграций присваиваются в порядке этапов):
 
 ```sql
@@ -311,23 +317,6 @@ CREATE TABLE snapshots (
 );
 CREATE TABLE snapshot_dirs (                          -- только папки глубины ≤ 4 и размером ≥ 50 МБ
   snapshot_id INTEGER, path TEXT, total_size INTEGER, total_files INTEGER
-);
-
--- Программы (этап 6)
-CREATE TABLE apps (
-  id INTEGER PRIMARY KEY,
-  source TEXT,              -- 'hklm' | 'hklm_wow' | 'hkcu' | 'appx'
-  reg_key TEXT, name TEXT, publisher TEXT, version TEXT,
-  install_date TEXT, install_location TEXT,
-  estimated_size INTEGER,   -- байты (в реестре EstimatedSize в КБ)
-  measured_size INTEGER,    -- из индекса по install_location, если есть
-  uninstall_cmd TEXT, quiet_uninstall_cmd TEXT,
-  is_system_component INTEGER
-);
-CREATE TABLE app_usage (
-  app_id INTEGER, exe_name TEXT,
-  last_run REAL, run_count INTEGER,
-  source TEXT                -- 'prefetch' | 'userassist' | 'exe_atime'
 );
 
 ```
@@ -454,6 +443,7 @@ python -m pcinspector schedule install|remove|status [--weekly SUN 03:00]
 | POST | `/api/scan` | `{paths: [...]}` → `{job_id}` |
 | POST | `/api/hash` | → `{job_id}` |
 | POST | `/api/apps/collect` | → `{job_id}` |
+| POST | `/api/apps/{id}/uninstall` | `{confirmed: true}` → открыть штатный деинсталлятор с проверкой записи реестра |
 | GET | `/api/jobs/{id}` | прогресс |
 | POST | `/api/jobs/{id}/cancel` | отмена |
 | GET | `/api/analyzers` | список + JSON-схема параметров |

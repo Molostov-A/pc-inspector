@@ -24,6 +24,10 @@ class HashRequest(BaseModel):
     min_size: str | int = "1M"
 
 
+class UninstallRequest(BaseModel):
+    confirmed: bool = False
+
+
 class ScanCancelled(BaseModel):
     cancelled: bool
 

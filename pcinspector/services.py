@@ -17,7 +17,7 @@ from threading import Event
 from typing import Any, Literal, NotRequired, TypedDict
 
 from . import config
-from .actions import executor, plans, quarantine
+from .actions import executor, plans, quarantine, uninstaller
 from .actions.plans import Action, Author, PlanItemIn
 from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
@@ -67,6 +67,49 @@ def start_hash(
 
 def cancel_job(job_id: str) -> bool:
     return jobs.cancel_job(job_id)
+
+
+def collect_apps(*, db_path: Path | str | None = None) -> str:
+    from .collectors import usage
+
+    path = _db_path(db_path)
+
+    def work(cancel: Event) -> jobs.AppsResult:
+        with closing(db.connect(path)) as con:
+            count, notes = usage.collect(con, cancel)
+            return {"count": count, "notes": notes}
+
+    return jobs.start_apps(work)
+
+
+def open_uninstaller(app_id: int, *, confirmed: bool, db_path: Path | str | None = None) -> None:
+    if not confirmed:
+        raise ValueError("Подтвердите запуск деинсталлятора")
+    from .collectors import apps
+
+    with closing(_read_index(db_path)) as con:
+        if con.execute("SELECT 1 FROM sqlite_schema WHERE name='apps'").fetchone() is None:
+            raise KeyError("Сведения о программе отсутствуют")
+        row = con.execute(
+            "SELECT source,reg_key,name,uninstall_cmd,quiet_uninstall_cmd FROM apps WHERE id=? AND is_system_component=0",
+            (app_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError("Сведения о программе отсутствуют")
+    if not row["uninstall_cmd"] or row["uninstall_cmd"] == row["quiet_uninstall_cmd"]:
+        raise ValueError("Интерактивная команда деинсталляции отсутствует")
+    try:
+        current = apps.current_app(row["source"], row["reg_key"])
+    except OSError as ex:
+        raise ValueError("Не удалось проверить запись программы в реестре") from ex
+    if (
+        current is None
+        or current.name != row["name"]
+        or current.uninstall_cmd != row["uninstall_cmd"]
+        or current.uninstall_cmd == current.quiet_uninstall_cmd
+    ):
+        raise ValueError("Запись программы изменилась. Обновите список программ")
+    uninstaller.launch(current.uninstall_cmd)
 
 
 def create_plan(
@@ -510,7 +553,16 @@ def ai_brief(max_items: int = 15, *, db_path: Path | str | None = None) -> str:
         elif not duplicates.notes:
             lines.append("Групп дубликатов в выбранном размере не найдено.")
         lines.extend(duplicates.notes)
-        lines.append("Сведения об использовании программ и росте появятся после соответствующих этапов.")
+        applications = get("unused_apps")(con, limit=limit)
+        lines.extend(["", "### Неиспользуемые программы"])
+        lines.extend(
+            f"- {_markdown_cell(item.title)} — {human_size(item.size)}. {item.reason}."
+            for item in applications.findings
+        )
+        lines.extend(applications.notes)
+        if not applications.findings and "collected_at" in applications.summary:
+            lines.append("В выбранном диапазоне подходящих программ нет.")
+        lines.append("История роста появится после этапа снимков.")
 
     text = "\n".join(lines) + "\n"
     if len(text) > 12_000:

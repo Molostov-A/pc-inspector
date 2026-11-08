@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS roots (
@@ -149,6 +149,36 @@ CREATE TABLE hash_runs (
 """
 
 
+SCHEMA_V5 = """
+CREATE TABLE apps (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    reg_key TEXT NOT NULL COLLATE NOCASE,
+    name TEXT NOT NULL,
+    publisher TEXT,
+    version TEXT,
+    install_date REAL,
+    install_location TEXT,
+    display_icon TEXT,
+    estimated_size INTEGER,
+    measured_size INTEGER,
+    uninstall_cmd TEXT,
+    quiet_uninstall_cmd TEXT,
+    is_system_component INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, reg_key)
+);
+CREATE TABLE app_usage (
+    app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    exe_name TEXT NOT NULL,
+    exe_path TEXT,
+    last_run REAL NOT NULL,
+    run_count INTEGER,
+    source TEXT NOT NULL,
+    PRIMARY KEY(app_id, source)
+);
+"""
+
+
 def migrate(con: sqlite3.Connection) -> None:
     """Довести схему до текущей версии без потери ранее записанных строк."""
     version = con.execute("PRAGMA user_version").fetchone()[0]
@@ -160,7 +190,9 @@ def migrate(con: sqlite3.Connection) -> None:
         version = con.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
             raise ValueError(f"Версия индекса {version} новее поддерживаемой ({SCHEMA_VERSION})")
-        for next_version, schema in enumerate((SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4), start=1):
+        for next_version, schema in enumerate(
+            (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5), start=1
+        ):
             if version < next_version:
                 for statement in schema.split(";"):
                     if statement.strip():

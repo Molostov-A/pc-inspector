@@ -35,6 +35,8 @@ def _parser() -> argparse.ArgumentParser:
     hashes.add_argument("--root", default="", help="Ограничить поиск папкой")
     hashes.add_argument("--min-size", default="1M", help="Минимальный размер файла")
     _global_options(hashes)
+    applications = commands.add_parser("apps", help="Собрать список программ и сведения об использовании")
+    _global_options(applications)
     server = commands.add_parser("serve", help="Запустить локальный веб-интерфейс")
     server.add_argument("--port", type=int, default=8765, help="Порт локального сервера")
     server.add_argument("--open", action="store_true", help="Открыть приложение в браузере")
@@ -174,6 +176,10 @@ def _wait_job(job_id: str, as_json: bool) -> int:
 
     if as_json:
         _json(asdict(status))
+    elif status.apps_result is not None:
+        print(f"Записей о программах: {status.apps_result['count']:,}")
+        for note in status.apps_result["notes"]:
+            print(note)
     elif status.hash_result is not None:
         result = status.hash_result
         print(
@@ -190,10 +196,12 @@ def _wait_job(job_id: str, as_json: bool) -> int:
     for error in status.errors:
         print(error, file=sys.stderr)
     if status.state == "cancelled":
-        print(
-            "Поиск дубликатов отменён." if status.kind == "hash" else "Сканирование отменено.",
-            file=sys.stderr,
-        )
+        message = {
+            "hash": "Поиск дубликатов отменён.",
+            "apps": "Сбор программ отменён.",
+            "scan": "Сканирование отменено.",
+        }
+        print(message[status.kind], file=sys.stderr)
         return 130
     return 0 if status.state == "completed" else 1
 
@@ -297,6 +305,10 @@ def main(argv: list[str] | None = None) -> int:
             return _scan(args["paths"], db_path, as_json)
         if command == "hash":
             return _wait_job(services.start_hash(args["root"], args["min_size"], db_path=db_path), as_json)
+        if command == "apps":
+            if not as_json:
+                print("Собираем записи реестра и сведения о запусках…", file=sys.stderr)
+            return _wait_job(services.collect_apps(db_path=db_path), as_json)
         if command == "plan":
             return _plan_command(args, db_path, as_json)
         if command == "quarantine":

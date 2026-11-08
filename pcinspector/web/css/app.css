@@ -183,6 +183,9 @@ dialog::backdrop { background: #0c1a16aa; }
 dialog form { display: grid; gap: 10px; }
 .actions { display: flex; justify-content: end; gap: 8px; }
 .row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tab { border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; background: var(--surface); }
+.tab.selected { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.page > .row-actions form { align-items: end; }
 .hash-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
 .hash-form > .field:first-child { flex: 1 1 210px; }
 .hash-form > .error { flex-basis: 100%; }

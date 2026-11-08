@@ -125,6 +125,6 @@ def test_module_entrypoint(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captu
         runpy.run_module("pcinspector", run_name="__main__")
     assert exit_info.value.code == 0
     metadata = json.loads(capsys.readouterr().out)
-    assert len(metadata) == 8
+    assert len(metadata) == 10
     types = next(info for info in metadata if info["id"] == "types")
     assert next(param for param in types["params"] if param["name"] == "by")["choices"] == ["category", "ext"]

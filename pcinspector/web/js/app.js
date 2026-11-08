@@ -7,8 +7,9 @@ import { render as analyzers } from "./pages/analyzers.js";
 import { render as plans } from "./pages/plans.js";
 import { render as history } from "./pages/history.js";
 import { render as duplicates } from "./pages/duplicates.js";
+import { render as stale } from "./pages/stale.js";
 
-const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history, "/duplicates": duplicates };
+const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history, "/duplicates": duplicates, "/stale": stale };
 const activities = {
   "/": "Читаем индекс и сводку по дискам…",
   "/explorer": "Читаем содержимое папки и строим карту…",
@@ -17,6 +18,7 @@ const activities = {
   "/plans": "Читаем планы уборки…",
   "/history": "Читаем журнал и карантин…",
   "/duplicates": "Читаем готовые группы дубликатов…",
+  "/stale": "Проверяем даты использования в индексе…",
 };
 const page = document.querySelector("#page");
 const theme = document.querySelector("#theme");

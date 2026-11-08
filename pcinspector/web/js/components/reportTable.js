@@ -4,7 +4,7 @@ import { sizeBar } from "./sizeBar.js";
 
 const label = item => item.title.startsWith("[") ? item.title : item.path || item.title;
 
-export function reportTable(report, { explorer = false, openPath = null, showFiles = true, planControl = null } = {}) {
+export function reportTable(report, { explorer = false, openPath = null, showFiles = true, planControl = null, appControl = null } = {}) {
   const panel = el("div", "report");
   for (const note of report.notes ?? []) panel.append(message(note, "note"));
   const rows = report.findings ?? [];
@@ -14,16 +14,23 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
   }
   const total = report.summary?.total_size ?? report.total_size;
   const cols = [
-    { name: explorer ? "Папка или файл" : "Путь или название", value: label,
+    { name: appControl ? "Программа" : explorer ? "Папка или файл" : "Путь или название", value: item => appControl ? item.title : label(item),
       cell: item => explorer && item.kind === "dir" && item.path
         ? link(item.title, "/explorer", { path: item.path, files: showFiles ? "1" : "0" }, "text-link")
-        : explorer ? item.title : label(item) },
+        : appControl ? el("div", "", item.title, item.meta.version ? el("p", "muted", item.meta.version) : null)
+          : explorer ? item.title : label(item) },
     { name: "Размер", value: item => item.size, cell: item => sized(item.size) },
     ...(explorer ? [
       { name: "Доля", value: item => item.size, cell: item => sizeBar(item.size, total) },
       { name: "Файлов", value: item => item.meta.files ?? 0, cell: item => number(item.meta.files) },
       { name: "Последнее изменение", value: item => item.meta.newest_mtime ?? 0,
         cell: item => date(item.meta.newest_mtime) },
+    ] : appControl ? [
+      { name: "Издатель", value: item => item.meta.publisher ?? "", cell: item => item.meta.publisher ?? "—" },
+      { name: "Последний запуск", value: item => item.meta.last_run ?? 0, cell: item => date(item.meta.last_run) },
+      { name: "Достоверность", value: item => item.meta.confidence ?? "", cell: item => ({
+        prefetch: "Высокая · Prefetch", userassist: "Средняя · UserAssist", atime: "Низкая · дата доступа",
+      })[item.meta.source] ?? "Нет данных" },
     ] : [
       { name: "Оценка", value: item => safetyLabels[item.safety], cell: item => safetyBadge(item.safety) },
       { name: "Причина", value: item => item.reason ?? "", cell: item => item.reason ?? "—" },
@@ -54,7 +61,7 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
   function update() {
     const search = input.value.trim().toLocaleLowerCase("ru");
     const visible = rows.filter(item =>
-      `${item.title} ${item.path ?? ""} ${item.reason ?? ""} ${safetyLabels[item.safety] ?? ""}`
+      `${item.title} ${item.path ?? ""} ${item.reason ?? ""} ${safetyLabels[item.safety] ?? ""} ${item.meta?.publisher ?? ""}`
         .toLocaleLowerCase("ru").includes(search),
     );
     visible.sort((a, b) => {
@@ -76,10 +83,11 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
       const control = item.path && item.safety !== "keep" && item.path !== report.summary?.path
         ? planControl?.(item) : null;
       return el("tr", "", ...cols.map(col => el("td", "", col.cell(item))),
-        openPath || planControl ? el("td", "", el("div", "row-actions", action, control)) : null);
+        openPath || planControl || appControl
+          ? el("td", "", el("div", "row-actions", action, control, appControl?.(item))) : null);
     }));
   }
-  if (openPath || planControl) {
+  if (openPath || planControl || appControl) {
     const actionHeader = el("th", "", "Действие");
     actionHeader.scope = "col";
     head.append(actionHeader);

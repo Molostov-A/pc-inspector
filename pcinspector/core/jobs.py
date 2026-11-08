@@ -38,6 +38,11 @@ class HashResult(TypedDict):
     errors: int
 
 
+class AppsResult(TypedDict):
+    count: int
+    notes: list[str]
+
+
 HashWork = Callable[[Callable[[HashProgress], None], Event], HashResult]
 
 
@@ -48,9 +53,10 @@ class JobStatus:
     progress: scanner.ScanProgress | None = None
     results: tuple[scanner.ScanResult, ...] = ()
     errors: tuple[str, ...] = ()
-    kind: Literal["scan", "hash"] = "scan"
+    kind: Literal["scan", "hash", "apps"] = "scan"
     hash_progress: HashProgress | None = None
     hash_result: HashResult | None = None
+    apps_result: AppsResult | None = None
 
 
 @dataclass(slots=True)
@@ -82,7 +88,16 @@ def start_hash(work: HashWork) -> str:
     return _start("hash", run)
 
 
-def _start(kind: Literal["scan", "hash"], work: Callable[[_Job], None]) -> str:
+def start_apps(work: Callable[[Event], AppsResult]) -> str:
+    def run(job: _Job) -> None:
+        result = work(job.cancel)
+        with _lock:
+            job.status = replace(job.status, apps_result=result)
+
+    return _start("apps", run)
+
+
+def _start(kind: Literal["scan", "hash", "apps"], work: Callable[[_Job], None]) -> str:
     job_id = uuid4().hex
     job = _Job(JobStatus(job_id, kind=kind))
     with _lock:
@@ -94,10 +109,12 @@ def _start(kind: Literal["scan", "hash"], work: Callable[[_Job], None]) -> str:
 def job_status(job_id: str) -> JobStatus:
     with _lock:
         status = _jobs[job_id].status
+        apps = status.apps_result
         return replace(
             status,
             results=tuple(result.copy() for result in status.results),
             hash_result=status.hash_result.copy() if status.hash_result is not None else None,
+            apps_result={"count": apps["count"], "notes": apps["notes"].copy()} if apps is not None else None,
         )
 
 
