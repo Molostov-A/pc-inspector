@@ -11,14 +11,14 @@ from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from . import config
 from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
 from .analyzers.overview import directory_finding, find_directory
 from .core import db, jobs, safety, scanner
-from .core.models import Report
+from .core.models import Finding, Report
 
 
 def _db_path(db_path: Path | str | None) -> Path:
@@ -99,6 +99,39 @@ def tree(path: str, limit: int = 100, *, db_path: Path | str | None = None) -> R
     return run_analyzer("tree", path=path, limit=limit, db_path=db_path)
 
 
+def _folder_files(con: sqlite3.Connection, directory_id: int, limit: int) -> Iterable[sqlite3.Row]:
+    return con.execute(
+        "SELECT name, path, size, mtime, protected FROM files_v WHERE dir_id = ? "
+        "ORDER BY size DESC, name LIMIT ?",
+        (directory_id, limit),
+    )
+
+
+def folder_contents(path: str, limit: int, *, db_path: Path | str | None = None) -> Report:
+    """Дочерние папки и крупнейшие файлы непосредственно в выбранной папке."""
+    with closing(_read_index(db_path)) as con, con:
+        con.execute("BEGIN")
+        report = get("tree")(con, path=path, limit=limit)
+        parent = find_directory(con, path) if path else None
+        if parent is None:
+            return report
+        report.findings = [item for item in report.findings if item.kind == "dir"]
+        for row in _folder_files(con, parent["id"], limit):
+            report.findings.append(
+                Finding(
+                    "file",
+                    row["name"],
+                    row["size"],
+                    row["path"],
+                    safety="keep" if row["protected"] else "info",
+                    meta={"files": 1, "newest_mtime": row["mtime"]},
+                )
+            )
+        if parent["own_files"] > limit:
+            report.notes.append(f"Показаны {limit} крупнейших файлов из {parent['own_files']}.")
+        return report
+
+
 def largest_folders(*, db_path: Path | str | None = None) -> Report:
     """Пять крупнейших дочерних папок просканированных корней."""
     with closing(_read_index(db_path)) as con:
@@ -109,9 +142,10 @@ def largest_folders(*, db_path: Path | str | None = None) -> Report:
 
 
 def open_in_explorer(path: str, *, db_path: Path | str | None = None) -> None:
-    """Показать в Проводнике существующий путь из индекса."""
+    """Открыть папку или выделить файл в Проводнике без запуска файла."""
     with closing(_read_index(db_path)) as con:
         row = find_directory(con, path)
+        directory = row is not None
         if row is None:
             column, normalized = path_comparison("path", index_path(path))
             row = con.execute(
@@ -121,7 +155,10 @@ def open_in_explorer(path: str, *, db_path: Path | str | None = None) -> None:
     if row is None:
         raise FileNotFoundError(path)
     indexed_path = safety.local_path_without_links(row["path"])
-    subprocess.Popen([str(config.EXPLORER_EXE), "/select,", indexed_path])
+    if directory and not Path(indexed_path).is_dir():
+        raise FileNotFoundError(path)
+    options = [] if directory else ["/select,"]
+    subprocess.Popen([str(config.EXPLORER_EXE), *options, indexed_path])
 
 
 def list_drives(*, db_path: Path | str | None = None) -> list[dict[str, Any]]:
@@ -134,26 +171,54 @@ class TreemapNode(TypedDict):
     value: int
     path: str | None
     children: list[TreemapNode]
+    kind: NotRequired[Literal["file"]]
 
 
 def _treemap_children(
     con: sqlite3.Connection,
     parent: sqlite3.Row,
     depth: int,
+    include_files: bool,
 ) -> list[TreemapNode]:
     rows = con.execute(
         "SELECT * FROM dirs WHERE parent_id = ? AND total_size > 0 ORDER BY total_size DESC",
         (parent["id"],),
     )
-    return _treemap_nodes(con, rows, parent["total_size"], parent["own_size"], depth)
+    nodes = _treemap_nodes(con, rows, parent["total_size"], depth, include_files)
+    own = parent["own_size"]
+    if include_files and own:
+        for row in _folder_files(con, parent["id"], 30):
+            if row["size"] <= 0 or row["size"] * 200 < parent["total_size"]:
+                break
+            own -= row["size"]
+            nodes.append(
+                TreemapNode(name=row["name"], value=row["size"], path=row["path"], children=[], kind="file")
+            )
+    if own:
+        if own * 200 >= parent["total_size"]:
+            nodes.append(
+                TreemapNode(
+                    name="Остальные файлы" if include_files else "Файлы в папке",
+                    value=own,
+                    path=None,
+                    children=[],
+                )
+            )
+        else:
+            other = next((node for node in nodes if node["name"] == "Прочее" and node["path"] is None), None)
+            if other is None:
+                nodes.append(TreemapNode(name="Прочее", value=own, path=None, children=[]))
+            else:
+                other["value"] += own
+    return nodes
 
 
 def _treemap_nodes(
     con: sqlite3.Connection,
     rows: Iterable[sqlite3.Row],
     total: int,
-    own: int,
     depth: int,
+    include_files: bool,
 ) -> list[TreemapNode]:
     nodes: list[TreemapNode] = []
     other = 0
@@ -167,13 +232,9 @@ def _treemap_nodes(
                     name=row["name"],
                     value=size,
                     path=row["path"],
-                    children=_treemap_children(con, row, depth - 1) if depth > 1 else [],
+                    children=_treemap_children(con, row, depth - 1, include_files) if depth > 1 else [],
                 )
             )
-    if own and own * 200 >= total:
-        nodes.append(TreemapNode(name="Файлы в папке", value=own, path=None, children=[]))
-    else:
-        other += own
     if other:
         nodes.append(TreemapNode(name="Прочее", value=other, path=None, children=[]))
     return nodes
@@ -183,6 +244,7 @@ def treemap(
     path: str,
     depth: int = 2,
     *,
+    include_files: bool = False,
     db_path: Path | str | None = None,
 ) -> list[TreemapNode]:
     if not 1 <= depth <= 2:
@@ -191,14 +253,14 @@ def treemap(
         con.execute("BEGIN")
         if path:
             parent = find_directory(con, path)
-            return _treemap_children(con, parent, depth) if parent is not None else []
+            return _treemap_children(con, parent, depth, include_files) if parent is not None else []
         roots = con.execute(
             "SELECT * FROM dirs WHERE parent_id IS NULL AND total_size > 0 ORDER BY total_size DESC"
         )
         total = con.execute(
             "SELECT COALESCE(SUM(total_size), 0) FROM dirs WHERE parent_id IS NULL"
         ).fetchone()[0]
-        return _treemap_nodes(con, roots, total, 0, depth)
+        return _treemap_nodes(con, roots, total, depth, include_files)
 
 
 def _sql_value(value: Any) -> Any:

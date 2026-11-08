@@ -4,7 +4,7 @@ import { sizeBar } from "./sizeBar.js";
 
 const label = item => item.title.startsWith("[") ? item.title : item.path || item.title;
 
-export function reportTable(report, { explorer = false, openPath = null } = {}) {
+export function reportTable(report, { explorer = false, openPath = null, showFiles = true } = {}) {
   const panel = el("div", "report");
   for (const note of report.notes ?? []) panel.append(message(note, "note"));
   const rows = report.findings ?? [];
@@ -14,9 +14,10 @@ export function reportTable(report, { explorer = false, openPath = null } = {}) 
   }
   const total = report.summary?.total_size ?? report.total_size;
   const cols = [
-    { name: explorer ? "Папка" : "Путь или название", value: label,
+    { name: explorer ? "Папка или файл" : "Путь или название", value: label,
       cell: item => explorer && item.kind === "dir" && item.path
-        ? link(item.title, "/explorer", { path: item.path }, "text-link") : label(item) },
+        ? link(item.title, "/explorer", { path: item.path, files: showFiles ? "1" : "0" }, "text-link")
+        : explorer ? item.title : label(item) },
     { name: "Размер", value: item => item.size, cell: item => sized(item.size) },
     ...(explorer ? [
       { name: "Доля", value: item => item.size, cell: item => sizeBar(item.size, total) },
@@ -67,7 +68,7 @@ export function reportTable(report, { explorer = false, openPath = null } = {}) 
     count.textContent = `${number(visible.length)} из ${number(rows.length)}`;
     body.replaceChildren(...visible.map(item => {
       let action;
-      if (openPath && item.kind === "dir" && item.path) {
+      if (openPath && item.path && (item.kind === "dir" || (item.kind === "file" && item.path !== report.summary?.path))) {
         action = el("button", "secondary small", "Открыть в Проводнике");
         action.type = "button";
         action.addEventListener("click", () => openPath(item.path));

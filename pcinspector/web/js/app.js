@@ -1,10 +1,17 @@
 import { el, message } from "./ui.js";
+import { beginActivity } from "./activity.js";
 import { render as home } from "./pages/home.js";
 import { render as explorer } from "./pages/explorer.js";
 import { render as junk } from "./pages/junk.js";
 import { render as analyzers } from "./pages/analyzers.js";
 
 const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers };
+const activities = {
+  "/": "Читаем индекс и сводку по дискам…",
+  "/explorer": "Читаем содержимое папки и строим карту…",
+  "/junk": "Собираем группы мусора из индекса…",
+  "/analyzers": "Загружаем список анализаторов и параметры…",
+};
 const page = document.querySelector("#page");
 const theme = document.querySelector("#theme");
 let controller;
@@ -33,13 +40,15 @@ async function navigate() {
   }
   const container = el("div", "page");
   page.replaceChildren(container);
-  container.append(message("Загрузка…", "loading"));
+  const finish = beginActivity(activities[route]);
   try {
     const cleanup = await routes[route](container, new URLSearchParams(query), signal);
     if (signal.aborted) cleanup?.();
     else dispose = cleanup;
   } catch (error) {
     if (!signal.aborted) container.replaceChildren(message(error.message, "error panel"));
+  } finally {
+    finish();
   }
 }
 

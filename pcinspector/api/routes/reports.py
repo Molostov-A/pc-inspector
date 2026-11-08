@@ -50,9 +50,13 @@ def analyzer(analyzer_id: str, request: Request) -> dict[str, Any]:
 
 @router.get("/tree")
 def tree(
-    request: Request, path: str = "", limit: Annotated[int, Query(ge=1, le=1000)] = 100
+    request: Request,
+    path: str = "",
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    files: bool = False,
 ) -> dict[str, Any]:
-    return services.tree(path, limit, db_path=request.app.state.db_path).to_dict()
+    read = services.folder_contents if files else services.tree
+    return read(path, limit, db_path=request.app.state.db_path).to_dict()
 
 
 @router.get("/folders/top")
@@ -65,5 +69,14 @@ def treemap(
     request: Request,
     path: str = "",
     depth: Annotated[int, Query(ge=1, le=2)] = 2,
+    files: bool = False,
 ) -> list[dict[str, Any]]:
-    return [dict(node) for node in services.treemap(path, depth, db_path=request.app.state.db_path)]
+    return [
+        dict(node)
+        for node in services.treemap(
+            path,
+            depth,
+            include_files=files,
+            db_path=request.app.state.db_path,
+        )
+    ]

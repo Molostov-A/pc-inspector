@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { scanActivity } from "./activity.js";
 import { button, el, number } from "./ui.js";
 
 const dialog = document.querySelector("#scan-dialog");
@@ -31,6 +32,7 @@ form.addEventListener("submit", async event => {
   errorBox.hidden = true;
   try {
     const result = await api("scan", {}, {
+      activity: "Запускаем сканирование…",
       method: "POST", body: { paths: paths.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean) },
     });
     job = result.job_id;
@@ -54,7 +56,7 @@ function showStatus(status) {
   const cancel = button("Отменить", "secondary", async () => {
     cancel.disabled = true;
     try {
-      await api(`jobs/${job}/cancel`, {}, { method: "POST" });
+      await api(`jobs/${job}/cancel`, {}, { method: "POST", activity: "Запрашиваем отмену скана…" });
     } catch (error) {
       statusBox.append(el("p", "error", error.message));
       cancel.disabled = false;
@@ -63,11 +65,10 @@ function showStatus(status) {
   const close = button("Скрыть", "secondary", () => { statusBox.hidden = true; });
   const progress = status.progress;
   const count = progress && `${number(progress.files)} файлов · ${number(progress.dirs)} папок · ${number(progress.errors)} ошибок · ${number(Math.round(progress.files_per_second))} файлов/с`;
+  scanActivity(active ? (progress ? `Сканируем · ${count} · ${progress.path}` : states[status.state]) : "");
   statusBox.replaceChildren(...[
     el("div", "section-head", el("strong", "", states[status.state]), active ? cancel : close),
     bar,
-    count ? el("p", "muted", count) : null,
-    active && progress ? el("p", "path", progress.path) : null,
     ...status.results.map(result => el("p", "muted", `${result.root} · ${number(result.files)} файлов · ${number(result.errors)} ошибок`)),
     ...status.errors.map(error => el("p", "error", error)),
   ].filter(Boolean));
@@ -83,6 +84,7 @@ async function poll() {
       return;
     }
   } catch (error) {
+    scanActivity("");
     statusBox.hidden = false;
     statusBox.replaceChildren(el("p", "error", error.message));
   }

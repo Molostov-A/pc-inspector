@@ -45,10 +45,10 @@ export async function render(container, params, signal) {
   form.addEventListener("submit", async event => {
     event.preventDefault();
     run.disabled = true;
-    result.replaceChildren(message("Формируем отчёт…", "loading"));
+    result.replaceChildren();
     try {
       const report = await api(`analyzers/${encodeURIComponent(active.id)}`,
-        Object.fromEntries(new FormData(form)), { signal });
+        Object.fromEntries(new FormData(form)), { signal, activity: `Формируем отчёт «${active.title}»…` });
       result.replaceChildren(el("div", "section-head", el("h2", "", "Результат"), sized(report.total_size)),
         reportTable(report));
     } catch (error) {

@@ -168,4 +168,26 @@ def test_open_requires_indexed_path_and_token(
             assert client.post("/api/open", json={"path": str(path)}, headers=headers).json() == {
                 "opened": True
             }
-        assert launches == [[str(config.EXPLORER_EXE), "/select,", str(path)] for path in (directory, file)]
+        assert launches == [
+            [str(config.EXPLORER_EXE), str(directory)],
+            [str(config.EXPLORER_EXE), "/select,", str(file)],
+        ]
+
+
+def test_tree_and_treemap_show_large_files(fake_tree: Path, index: Path) -> None:
+    (fake_tree / "large.bin").write_bytes(b"x" * 10_000)
+    (fake_tree / "tiny.bin").write_bytes(b"x" * 10)
+    with closing(db.connect(index)) as con:
+        scanner.scan(str(fake_tree), con)
+    with TestClient(create_app(db_path=index), base_url=ORIGIN) as client:
+        params = {"path": str(fake_tree), "files": "true", "limit": 1}
+        report = client.get("/api/tree", params=params).json()
+        files = [item for item in report["findings"] if item["kind"] == "file"]
+        assert [(item["title"], item["size"]) for item in files] == [("large.bin", 10_000)]
+        assert report["summary"]["total_size"] == 10280
+        assert report["notes"]
+        chart = client.get("/api/treemap", params=params).json()
+        assert [node["name"] for node in chart if node.get("kind") == "file"] == ["large.bin"]
+        assert sum(node["value"] for node in chart) == 10280
+        documents = next(node for node in chart if node["name"] == "Документы")
+        assert {child["name"] for child in documents["children"]} == {"копия.bin", "отчёт.txt"}

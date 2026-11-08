@@ -1,4 +1,4 @@
-import { href, size } from "../ui.js";
+import { href, number, size } from "../ui.js";
 
 const colors = ["#246a64", "#325a77", "#5b637d", "#776446", "#3b7760", "#3c7770"];
 
@@ -15,7 +15,7 @@ function chartData(nodes, parent = null, color = null) {
   });
 }
 
-export function treemap(container, nodes) {
+export function treemap(container, nodes, openPath, files) {
   const chart = globalThis.echarts.init(container);
   const resize = new ResizeObserver(() => chart.resize());
   resize.observe(container);
@@ -23,7 +23,10 @@ export function treemap(container, nodes) {
     animation: false,
     tooltip: {
       renderMode: "richText",
-      formatter: ({ data }) => size(data.value),
+      formatter: ({ data }) => [
+        `${size(data.value)} · ${number(data.value)} байт`,
+        data.kind === "file" ? "Показать в Проводнике" : "",
+      ].filter(Boolean).join("\n"),
     },
     series: [{
       type: "treemap", data: chartData(nodes), roam: false, nodeClick: false, breadcrumb: { show: false },
@@ -38,7 +41,8 @@ export function treemap(container, nodes) {
     }],
   });
   chart.on("click", ({ data }) => {
-    if (data?.navigationPath) location.hash = href("/explorer", { path: data.navigationPath });
+    if (data?.kind === "file") openPath(data.path);
+    else if (data?.navigationPath) location.hash = href("/explorer", { path: data.navigationPath, files: files ? "1" : "0" });
   });
   return () => {
     resize.disconnect();
