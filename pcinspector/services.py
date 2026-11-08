@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
 from . import config
+from .actions import executor, plans, quarantine
+from .actions.plans import Action, Author, PlanItemIn
 from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
 from .analyzers.overview import directory_finding, find_directory
@@ -44,6 +46,102 @@ def job_status(job_id: str) -> jobs.JobStatus:
 
 def cancel_job(job_id: str) -> bool:
     return jobs.cancel_job(job_id)
+
+
+def create_plan(
+    title: str,
+    author: Author = "user",
+    note: str = "",
+    *,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.create_plan(con, title, author, note)
+
+
+def list_plans(*, db_path: Path | str | None = None) -> list[dict[str, Any]]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.list_plans(con)
+
+
+def get_plan(plan_id: int, *, db_path: Path | str | None = None) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con, con:
+        con.execute("BEGIN")
+        return plans.get_plan(con, plan_id)
+
+
+def edit_plan(
+    plan_id: int,
+    title: str | None = None,
+    note: str | None = None,
+    *,
+    cancel: bool = False,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.edit_plan(con, plan_id, title, note, cancel)
+
+
+def add_plan_items(
+    plan_id: int,
+    items: list[PlanItemIn],
+    *,
+    db_path: Path | str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.add_items(con, plan_id, items)
+
+
+def edit_plan_item(
+    plan_id: int,
+    item_id: int,
+    *,
+    action: Action | None = None,
+    target: str | None = None,
+    selected: bool | None = None,
+    remove: bool = False,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.edit_item(
+            con, plan_id, item_id, action=action, target=target, selected=selected, remove=remove
+        )
+
+
+def plan_confirmation(plan_id: int, revision: int, *, db_path: Path | str | None = None) -> str:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return plans.issue_token(con, plan_id, revision)
+
+
+def execute_plan(plan_id: int, confirm_token: str, *, db_path: Path | str | None = None) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return executor.execute_plan(con, plan_id, confirm_token)
+
+
+def action_history(*, db_path: Path | str | None = None) -> list[dict[str, Any]]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return executor.history(con)
+
+
+def restore_action(action_id: int, *, db_path: Path | str | None = None) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return executor.restore_action(con, action_id)
+
+
+def list_quarantine(*, db_path: Path | str | None = None) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con, con:
+        con.execute("BEGIN")
+        return {"items": quarantine.entries(con), "size": quarantine.usage(con)}
+
+
+def purge_quarantine(
+    older_than_days: int = 30,
+    *,
+    confirmed: bool = False,
+    db_path: Path | str | None = None,
+) -> dict[str, Any]:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return executor.purge_quarantine(con, older_than_days, confirmed=confirmed)
 
 
 def list_analyzers() -> list[dict[str, Any]]:

@@ -4,7 +4,7 @@ import { sizeBar } from "./sizeBar.js";
 
 const label = item => item.title.startsWith("[") ? item.title : item.path || item.title;
 
-export function reportTable(report, { explorer = false, openPath = null, showFiles = true } = {}) {
+export function reportTable(report, { explorer = false, openPath = null, showFiles = true, planControl = null } = {}) {
   const panel = el("div", "report");
   for (const note of report.notes ?? []) panel.append(message(note, "note"));
   const rows = report.findings ?? [];
@@ -73,11 +73,13 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
         action.type = "button";
         action.addEventListener("click", () => openPath(item.path));
       }
+      const control = item.path && item.safety !== "keep" && item.path !== report.summary?.path
+        ? planControl?.(item) : null;
       return el("tr", "", ...cols.map(col => el("td", "", col.cell(item))),
-        openPath ? el("td", "", action) : null);
+        openPath || planControl ? el("td", "", el("div", "row-actions", action, control)) : null);
     }));
   }
-  if (openPath) {
+  if (openPath || planControl) {
     const actionHeader = el("th", "", "Действие");
     actionHeader.scope = "col";
     head.append(actionHeader);

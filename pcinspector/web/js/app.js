@@ -4,13 +4,17 @@ import { render as home } from "./pages/home.js";
 import { render as explorer } from "./pages/explorer.js";
 import { render as junk } from "./pages/junk.js";
 import { render as analyzers } from "./pages/analyzers.js";
+import { render as plans } from "./pages/plans.js";
+import { render as history } from "./pages/history.js";
 
-const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers };
+const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history };
 const activities = {
   "/": "Читаем индекс и сводку по дискам…",
   "/explorer": "Читаем содержимое папки и строим карту…",
   "/junk": "Собираем группы мусора из индекса…",
   "/analyzers": "Загружаем список анализаторов и параметры…",
+  "/plans": "Читаем планы уборки…",
+  "/history": "Читаем журнал и карантин…",
 };
 const page = document.querySelector("#page");
 const theme = document.querySelector("#theme");
@@ -33,7 +37,10 @@ async function navigate() {
   controller = new AbortController();
   const { signal } = controller;
   const [path, query] = location.hash.slice(1).split("?", 2);
-  const route = Object.hasOwn(routes, path) ? path : "/";
+  const params = new URLSearchParams(query);
+  const plan = /^\/plans\/(\d+)$/.exec(path);
+  const route = plan ? "/plans" : Object.hasOwn(routes, path) ? path : "/";
+  if (plan) params.set("id", plan[1]);
   for (const item of document.querySelectorAll("[data-page]")) {
     if (item.dataset.page === route) item.setAttribute("aria-current", "page");
     else item.removeAttribute("aria-current");
@@ -42,7 +49,7 @@ async function navigate() {
   page.replaceChildren(container);
   const finish = beginActivity(activities[route]);
   try {
-    const cleanup = await routes[route](container, new URLSearchParams(query), signal);
+    const cleanup = await routes[route](container, params, signal);
     if (signal.aborted) cleanup?.();
     else dispose = cleanup;
   } catch (error) {

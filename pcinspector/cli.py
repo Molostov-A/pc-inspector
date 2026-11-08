@@ -39,6 +39,39 @@ def _parser() -> argparse.ArgumentParser:
     _global_options(brief)
     mcp = commands.add_parser("mcp", help="Запустить локальный MCP-сервер через stdio")
     _global_options(mcp)
+    plan = commands.add_parser("plan", help="Просмотреть, создать или выполнить план")
+    _global_options(plan)
+    plan_commands = plan.add_subparsers(dest="operation", required=True)
+    for name in ("list", "show", "create", "add", "execute"):
+        entry = plan_commands.add_parser(name)
+        _global_options(entry)
+        if name in ("show", "add", "execute"):
+            entry.add_argument("plan_id", type=int)
+        if name == "create":
+            entry.add_argument("title")
+            entry.add_argument("--note", default="")
+        if name == "add":
+            entry.add_argument("path")
+            entry.add_argument(
+                "--action", choices=("recycle", "quarantine", "move", "delete_empty_dir"), default="recycle"
+            )
+            entry.add_argument("--target")
+            entry.add_argument("--reason", default="")
+        if name == "execute":
+            entry.add_argument("--yes", action="store_true")
+
+    quarantine = commands.add_parser("quarantine", help="Просмотреть, восстановить или очистить карантин")
+    _global_options(quarantine)
+    quarantine_commands = quarantine.add_subparsers(dest="operation", required=True)
+    for name in ("list", "restore", "purge"):
+        entry = quarantine_commands.add_parser(name)
+        _global_options(entry)
+        if name == "restore":
+            entry.add_argument("action_id", type=int)
+        if name == "purge":
+            entry.add_argument("--older-than", type=int, default=30)
+        if name != "list":
+            entry.add_argument("--yes", action="store_true")
     listing = commands.add_parser("analyzers", help="Показать список анализаторов")
     _global_options(listing)
     sql = commands.add_parser("sql", help="Выполнить SQL-запрос только для чтения")
@@ -138,6 +171,91 @@ def _scan(paths: list[str], db_path: str | None, as_json: bool) -> int:
     return 0 if status.state == "completed" else 1
 
 
+def _confirm(assume_yes: bool, prompt: str, as_json: bool) -> None:
+    if assume_yes:
+        return
+    if as_json:
+        raise ValueError("Для выполнения с --json укажите --yes")
+    print(prompt, file=sys.stderr)
+    if input("Введите yes для подтверждения: ").strip().lower() != "yes":
+        raise ValueError("Действие отменено")
+
+
+def _plan_command(args: dict[str, Any], db_path: str | None, as_json: bool) -> int:
+    operation = args["operation"]
+    if operation == "list":
+        result = services.list_plans(db_path=db_path)
+        if not as_json:
+            for plan in result:
+                print(f"{plan['id']} · {plan['title']} · {plan['status']} · {plan['item_count']} пунктов")
+            return 0
+    elif operation == "create":
+        result = services.create_plan(args["title"], note=args["note"], db_path=db_path)
+    elif operation == "add":
+        item = services.PlanItemIn(args["path"], args["action"], args["reason"], args["target"])
+        result = services.add_plan_items(args["plan_id"], [item], db_path=db_path)
+        if not as_json:
+            for rejected in result["rejected"]:
+                print(rejected["reason"], file=sys.stderr)
+            if result["accepted"]:
+                print("Пункт добавлен")
+            return int(bool(result["rejected"]))
+    else:
+        plan = services.get_plan(args["plan_id"], db_path=db_path)
+        summary = f"План {plan['id']} · {plan['title']} · {plan['selected_count']} пунктов · {human_size(plan['selected_size'])}"
+        if operation == "execute":
+            _confirm(args["yes"], summary, as_json)
+            token = services.plan_confirmation(plan["id"], plan["revision"], db_path=db_path)
+            result = services.execute_plan(plan["id"], token, db_path=db_path)
+            if not as_json:
+                print(
+                    f"Обработано {result['done']} пунктов ({human_size(result['processed_size'])}), "
+                    f"пропущено {result['skipped']}, ошибок {result['failed']}. "
+                    f"Освобождено на диске {human_size(result['freed_size'])}."
+                )
+                for item in result["issues"]:
+                    print(f"{item['path']} · {item['error']}")
+                return int(result["status"] == "partially")
+        else:
+            result = plan
+            if not as_json:
+                print(summary)
+                for item in plan["items"]:
+                    print(f"{item['id']} · {item['action']} · {human_size(item['size'])} · {item['path']}")
+                return 0
+    if as_json:
+        _json(result)
+    elif operation == "create":
+        print(f"Создан план {result['id']} · {result['title']}")
+    return int(bool(result.get("rejected"))) if operation == "add" else 0
+
+
+def _quarantine_command(args: dict[str, Any], db_path: str | None, as_json: bool) -> int:
+    operation = args["operation"]
+    if operation == "list":
+        result = services.list_quarantine(db_path=db_path)
+        if not as_json:
+            print(f"Объём карантина · {human_size(result['size'])}")
+            for item in result["items"]:
+                print(f"{item['id']} · {human_size(item['size'])} · {item['src']}")
+    elif operation == "restore":
+        _confirm(args["yes"], f"Восстановить запись {args['action_id']}?", as_json)
+        result = services.restore_action(args["action_id"], db_path=db_path)
+        if not as_json:
+            print(f"Восстановлено · {result['path']}" if result["restored"] else result["message"])
+    else:
+        days = args["older_than"]
+        _confirm(args["yes"], f"Переместить в Корзину записи карантина старше {days} дней?", as_json)
+        result = services.purge_quarantine(days, confirmed=True, db_path=db_path)
+        if not as_json:
+            print(f"В Корзину перемещено {result['count']} элементов")
+            for error in result["errors"]:
+                print(error["reason"], file=sys.stderr)
+    if as_json:
+        _json(result)
+    return int(operation == "purge" and bool(result["errors"]))
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -150,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if command == "scan":
             return _scan(args["paths"], db_path, as_json)
+        if command == "plan":
+            return _plan_command(args, db_path, as_json)
+        if command == "quarantine":
+            return _quarantine_command(args, db_path, as_json)
         if command == "serve":
             from .api.app import serve
 
@@ -187,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(" | ".join(str(value) if value is not None else "—" for value in row.values()))
         else:
             _report(services.run_analyzer(command, db_path=db_path, **args), as_json)
-    except (KeyError, ValueError, OverflowError, OSError, sqlite3.Error) as ex:
+    except (KeyError, ValueError, OverflowError, OSError, sqlite3.Error, EOFError) as ex:
         print(f"Ошибка: {ex}", file=sys.stderr)
         return 1
     return 0

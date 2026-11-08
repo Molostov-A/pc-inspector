@@ -30,6 +30,7 @@ def connect(db_path: Path | str = DEFAULT_DB, readonly: bool = False) -> sqlite3
         db_path.parent.mkdir(parents=True, exist_ok=True)
         con = sqlite3.connect(db_path)
         try:
+            con.execute("PRAGMA foreign_keys=ON")
             migrations.migrate(con)
             con.execute("PRAGMA journal_mode=WAL")
         except BaseException:

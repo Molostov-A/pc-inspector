@@ -1,6 +1,7 @@
 import { api } from "../api.js";
 import { reportTable } from "../components/reportTable.js";
-import { el, heading, href, link, message, sized } from "../ui.js";
+import { addToPlan } from "../components/planDialog.js";
+import { button, el, heading, href, link, message, sized } from "../ui.js";
 
 function inputFor(name, schema) {
   let input;
@@ -49,8 +50,13 @@ export async function render(container, params, signal) {
     try {
       const report = await api(`analyzers/${encodeURIComponent(active.id)}`,
         Object.fromEntries(new FormData(form)), { signal, activity: `Формируем отчёт «${active.title}»…` });
+      const feedback = el("div");
+      feedback.hidden = true;
       result.replaceChildren(el("div", "section-head", el("h2", "", "Результат"), sized(report.total_size)),
-        reportTable(report));
+        feedback, reportTable(report, { planControl: item => ["file", "dir"].includes(item.kind)
+          ? button("В план", "secondary small", () => addToPlan([{
+            path: item.path, reason: item.reason ?? "", safety: item.safety, source: active.id,
+          }], feedback)) : null }));
     } catch (error) {
       if (!signal.aborted) result.replaceChildren(message(error.message, "error"));
     } finally {

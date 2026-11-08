@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { reportTable } from "../components/reportTable.js";
+import { addToPlan } from "../components/planDialog.js";
 import { treemap } from "../components/treemap.js";
 import { button, el, heading, link, message, number, sized } from "../ui.js";
 
@@ -45,6 +46,8 @@ export async function render(container, params, signal) {
   const details = tree.summary.total_size === undefined ? "Папки отсортированы по размеру."
     : el("span", "", sized(tree.summary.total_size), " · ", number(tree.summary.total_files), " файлов");
   const notice = el("p", "note");
+  const feedback = el("div", "", "");
+  feedback.hidden = true;
   notice.hidden = true;
   notice.setAttribute("role", "status");
   async function openPath(path) {
@@ -66,7 +69,12 @@ export async function render(container, params, signal) {
     breadcrumbs(current, roots.findings, files),
     chartPanel,
     el("section", "panel", el("h2", "", current ? "Содержимое папки" : "Просканированные корни"),
-      notice, reportTable(tree, { explorer: true, openPath, showFiles: files })),
+      notice, feedback, reportTable(tree, {
+        explorer: true, openPath, showFiles: files,
+        planControl: item => button("В план", "secondary small", () => addToPlan([{
+          path: item.path, reason: item.reason ?? "", safety: "review", source: "tree",
+        }], feedback)),
+      })),
   );
   if (nodes.length && globalThis.echarts) return treemap(chart, nodes, openPath, files);
   if (nodes.length) chart.replaceWith(message("Карту не удалось загрузить. Данные доступны в таблице."));

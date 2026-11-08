@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 
-from .routes import reports, scan
+from .routes import plans, reports, scan
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -48,10 +48,13 @@ def create_app(*, port: int = DEFAULT_PORT, db_path: Path | str | None = None) -
         hosts = request.headers.getlist("host")
         if len(hosts) != 1 or hosts[0] not in allowed_hosts:
             return _error(403, "invalid_host", "Допустим только локальный адрес сервера")
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        mutation = request.method not in {"GET", "HEAD", "OPTIONS"}
+        confirmation = request.url.path.rstrip("/").endswith("/confirm-token")
+        if mutation or confirmation:
             supplied = request.headers.getlist("x-pci-token")
+            origins = request.headers.getlist("origin")
             if (
-                request.headers.getlist("origin") != [origin]
+                origins != [origin]
                 or len(supplied) != 1
                 or not secrets.compare_digest(supplied[0].encode(), token.encode())
             ):
@@ -78,6 +81,10 @@ def create_app(*, port: int = DEFAULT_PORT, db_path: Path | str | None = None) -
     async def request_error(_request: Request, _error_info: RequestValidationError) -> JSONResponse:
         return _error(422, "invalid_request", "Проверьте поля и значения запроса")
 
+    @app.exception_handler(KeyError)
+    async def missing(_request: Request, error: KeyError) -> JSONResponse:
+        return _error(404, "not_found", str(error.args[0]))
+
     @app.exception_handler(ValueError)
     @app.exception_handler(OverflowError)
     async def value_error(_request: Request, error: ValueError | OverflowError) -> JSONResponse:
@@ -95,6 +102,7 @@ def create_app(*, port: int = DEFAULT_PORT, db_path: Path | str | None = None) -
 
     app.include_router(reports.router)
     app.include_router(scan.router)
+    app.include_router(plans.router)
     for directory in ("css", "js", "vendor"):
         app.mount(f"/{directory}", StaticFiles(directory=WEB_DIR / directory), name=directory)
     return app

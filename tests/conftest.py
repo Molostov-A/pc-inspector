@@ -24,11 +24,13 @@ def fake_tree(tmp_path: Path) -> Path:
         ".venv/Lib/cache.bin": (b"x" * 16, old),
     }
     (root / "Пустая").mkdir(parents=True)
+    directories = {root, root / "Пустая"}
     for relative, (content, mtime) in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         os.utime(path, (mtime, mtime))
+        directories.update(parent for parent in path.parents if parent.is_relative_to(root))
 
     if os.name == "nt":
         from _winapi import CreateJunction
@@ -38,6 +40,8 @@ def fake_tree(tmp_path: Path) -> Path:
         except OSError:
             # На некоторых файловых системах junction недоступны.
             pass
+    for directory in directories:
+        os.utime(directory, (recent, recent))
     return root
 
 

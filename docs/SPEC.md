@@ -288,6 +288,12 @@ Report:
   `roots.disk_total, disk_free` для ёмкости и свободного места на момент скана.
 - `settings(key, value)` для JSON-настроек, в том числе `exclude_paths`.
 
+Версия 3 добавляет `plans`, `plan_items` и `actions_log`. Таблица `settings` сохраняется из v2.
+В `plans` хранятся автор, состояние, ревизия черновика и хеш одноразового подтверждения.
+В `plan_items` хранятся действие, источник, назначение, состояние выбора, ожидаемые размер и
+mtime, контрольная сумма метаданных поддерева и результат выполнения. `actions_log` фиксирует
+намерение до файловой операции, затем её результат и дату отката или очистки карантина.
+
 **Запланированные поля и таблицы** (версии миграций присваиваются в порядке этапов):
 
 ```sql
@@ -327,25 +333,6 @@ CREATE TABLE app_usage (
   source TEXT                -- 'prefetch' | 'userassist' | 'exe_atime'
 );
 
--- Планы и журнал (этап 4)
-CREATE TABLE plans (
-  id INTEGER PRIMARY KEY, title TEXT, author TEXT,     -- 'user' | 'ai'
-  note TEXT, created_at TEXT, status TEXT              -- draft | executed | partially | cancelled
-);
-CREATE TABLE plan_items (
-  id INTEGER PRIMARY KEY, plan_id INTEGER,
-  action TEXT,               -- 'recycle' | 'quarantine' | 'move' | 'delete_empty_dir'
-  path TEXT, target TEXT,    -- target только для move
-  size INTEGER, expected_mtime REAL,   -- снимок на момент добавления, для проверки перед выполнением
-  safety TEXT, reason TEXT, source TEXT,   -- source: id анализатора или 'ai' / 'manual'
-  selected INTEGER DEFAULT 1,
-  status TEXT DEFAULT 'pending', error TEXT  -- pending | done | skipped | failed
-);
-CREATE TABLE actions_log (
-  id INTEGER PRIMARY KEY, plan_item_id INTEGER, at TEXT,
-  action TEXT, src TEXT, dst TEXT, size INTEGER,
-  restorable INTEGER, restored_at TEXT
-);
 ```
 
 Пересканирование корня атомарно заменяет его строки в `dirs` и `files`. С этапа 7 перед заменой
@@ -419,7 +406,7 @@ CREATE TABLE actions_log (
 
 ### F3. Планы и выполнение (`actions/`)
 
-- **F3.1** Действия: `recycle` (в корзину Windows, по умолчанию), `quarantine` (переместить в `<диск>:\.pci-quarantine\<plan_id>\<относительный путь>` — **на тот же диск**, чтобы перемещение было мгновенным, плюс `manifest.json`), `move` (перенести в `target`), `delete_empty_dir`. **Безвозвратного удаления нет.** Очистка карантина старше N дней (по умолчанию 30) — отдельная явная команда.
+- **F3.1** Действия включают `recycle` (в Корзину Windows, по умолчанию), `quarantine` (поместить на тот же диск в `<диск>:\.pci-quarantine\<id>-<ключ>\payload\<относительный путь>`, рядом с `payload` хранится `manifest.json`), `move` (перенести в `target` на том же диске) и `delete_empty_dir` (пустую папку в Корзину). Очистка карантина старше N дней (по умолчанию 30) переносит записи в Корзину по отдельному подтверждению.
 - **F3.2** При добавлении пункта в план (`add_plan_items`) проверяется:
   - путь существует в индексе;
   - путь не в защищённой зоне (`core/safety.py`) и не является предком защищённой зоны;
@@ -481,7 +468,7 @@ python -m pcinspector schedule install|remove|status [--weekly SUN 03:00]
 | GET | `/api/plans/{id}` | план с пунктами |
 | POST | `/api/plans/{id}/items` | добавить пункты (ответ: принятые и отклонённые с причинами) |
 | PATCH | `/api/plans/{id}/items/{item}` | выбрать или снять, сменить действие |
-| GET | `/api/plans/{id}/confirm-token` | токен подтверждения |
+| GET/POST | `/api/plans/{id}/confirm-token?revision=` | токен для просмотренной ревизии, с заголовками Origin и X-PCI-Token |
 | POST | `/api/plans/{id}/execute` | `{confirm_token}` |
 | GET | `/api/history` | журнал действий |
 | POST | `/api/history/{action_id}/restore` | откат |

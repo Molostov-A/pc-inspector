@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
 DB_PATH = Path(os.environ.get("PCI_DB", DATA_DIR / "index.db"))
-QUARANTINE_DIR = Path(os.environ.get("PCI_QUARANTINE", DATA_DIR / "quarantine"))
+QUARANTINE_DIR = Path(os.environ["PCI_QUARANTINE"]) if os.environ.get("PCI_QUARANTINE") else None
 EXPLORER_EXE = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "explorer.exe"
 
 

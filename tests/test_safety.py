@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pcinspector import config
 from pcinspector.core import safety
 
 
@@ -129,3 +130,16 @@ def test_local_view_requires_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(safety, "os", SimpleNamespace(name="posix"))
     with pytest.raises(ValueError, match="только в Windows"):
         safety.local_path_without_links("/path")
+
+
+def test_quarantine_is_protected_and_same_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = Path(r"R:\Work\file")
+    with pytest.raises(ValueError, match="управляемого карантина"):
+        safety.validate_action_path(r"R:\.pci-quarantine\file")
+    monkeypatch.setattr(config, "QUARANTINE_DIR", None)
+    monkeypatch.setattr(safety, "local_path_without_links", lambda path: path)
+    assert safety.quarantine_root(source) == Path(r"R:\.pci-quarantine")
+    monkeypatch.setattr(config, "QUARANTINE_DIR", Path(r"S:\test-quarantine"))
+    monkeypatch.setattr(safety, "checked_action_path", lambda path, **_options: Path(path))
+    with pytest.raises(ValueError, match="том же диске"):
+        safety.quarantine_root(source)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -69,5 +69,22 @@ def create_server(*, db_path: Path | str | None = None) -> MCPServer:
     @server.tool(description="Get scan job state, progress, and errors by job ID.")
     def job_status(job_id: str) -> dict[str, Any]:
         return asdict(services.job_status(job_id))
+
+    @server.tool(description="Create an AI-authored draft cleanup plan. Does not execute actions.")
+    def create_plan(title: str, note: str = "") -> dict[str, Any]:
+        return services.create_plan(title, author="ai", note=note, db_path=db_path)
+
+    @server.tool(description="Add indexed paths to a draft after safety validation. Does not move any files.")
+    def add_to_plan(plan_id: int, items: list[services.PlanItemIn]) -> dict[str, Any]:
+        proposed = [replace(item, source="ai", safety="review") for item in items]
+        return services.add_plan_items(plan_id, proposed, db_path=db_path)
+
+    @server.tool(description="Read a cleanup plan and its items. Does not execute it.")
+    def get_plan(plan_id: int) -> dict[str, Any]:
+        return services.get_plan(plan_id, db_path=db_path)
+
+    @server.tool(description="List cleanup plans, including their author and status.")
+    def list_plans() -> list[dict[str, Any]]:
+        return services.list_plans(db_path=db_path)
 
     return server

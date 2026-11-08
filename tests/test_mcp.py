@@ -60,7 +60,20 @@ def test_stdio_tool_contract_and_readonly(fake_tree: Path, index: Path, tmp_path
                 "sql_query",
                 "start_scan",
                 "job_status",
+                "create_plan",
+                "add_to_plan",
+                "get_plan",
+                "list_plans",
             }
+            draft = await client.call_tool("create_plan", {"title": "План ИИ"})
+            assert not draft.is_error and draft.structured_content["author"] == "ai"
+            planned = fake_tree / "data-000.bin"
+            added = await client.call_tool(
+                "add_to_plan",
+                {"plan_id": draft.structured_content["id"], "items": [{"path": str(planned)}]},
+            )
+            assert not added.is_error and added.structured_content["accepted"][0]["source"] == "ai"
+            assert planned.exists()
             summary = await client.call_tool("get_brief")
             assert not summary.is_error
             assert "сводка" in str(summary.content)
