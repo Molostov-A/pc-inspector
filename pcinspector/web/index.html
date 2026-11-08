@@ -19,9 +19,11 @@
       <a href="#/junk" data-page="/junk"><span aria-hidden="true">◇</span> Мусор</a>
       <a href="#/duplicates" data-page="/duplicates"><span aria-hidden="true">▥</span> Дубликаты</a>
       <a href="#/stale" data-page="/stale"><span aria-hidden="true">◷</span> Забытое</a>
+      <a href="#/organize" data-page="/organize"><span aria-hidden="true">▦</span> Порядок</a>
       <a href="#/analyzers" data-page="/analyzers"><span aria-hidden="true">≡</span> Анализаторы</a>
       <a href="#/plans" data-page="/plans"><span aria-hidden="true">✓</span> Планы</a>
       <a href="#/history" data-page="/history"><span aria-hidden="true">↶</span> История</a>
+      <a href="#/settings" data-page="/settings"><span aria-hidden="true">⚙</span> Настройки</a>
     </nav>
     <div class="sidebar-foot"><span class="local"><i></i> Локальный индекс</span>
       <label for="theme">Оформление</label>
@@ -37,7 +39,7 @@
   <dialog id="scan-dialog" aria-labelledby="scan-title">
     <form id="scan-form">
       <h2 id="scan-title">Сканировать папки и диски</h2>
-      <p class="muted">Укажите по одному пути на строку. Пустое поле запускает скан всех доступных локальных томов NTFS.</p>
+      <p class="muted">Укажите по одному пути на строку. Если оставить поле пустым, сканируются корни из настроек или все локальные тома NTFS, если список корней пуст.</p>
       <label for="scan-paths">Пути для сканирования</label>
       <textarea id="scan-paths" rows="4" placeholder="C:\Users\Имя\Documents"></textarea>
       <p class="error" id="scan-error" role="alert" hidden></p>

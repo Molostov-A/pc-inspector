@@ -6,6 +6,7 @@ import ntpath
 import os
 import stat
 import string
+from collections.abc import Iterable
 from pathlib import Path, PureWindowsPath
 
 from .. import config
@@ -139,16 +140,42 @@ def local_path_without_links(path: str) -> str:
     return str(candidate)
 
 
-def checked_action_path(path: str, *, destination: bool = False, managed: bool = False) -> Path:
+def settings_path(path: str, *, allow_relative: bool = False) -> str:
+    raw = path.strip()
+    candidate = _windows_path(raw)
+    if candidate.is_absolute() and len(candidate.drive) == 2 and candidate.drive[0] in string.ascii_letters:
+        _validate_syntax(raw, candidate)
+        return str(candidate)
+    if allow_relative and not candidate.anchor and candidate.parts and ".." not in candidate.parts:
+        _validate_syntax(raw, PureWindowsPath("C:/", candidate))
+        return str(candidate)
+    raise ValueError("Укажите локальный путь Windows")
+
+
+def checked_action_path(
+    path: str,
+    *,
+    destination: bool = False,
+    managed: bool = False,
+    create_parents: bool = False,
+) -> Path:
     """Проверить обычный путь или родительскую папку нового назначения."""
     candidate = _windows_path(path)
     _validate_syntax(path, candidate)
     _validate(candidate, managed=managed)
-    local_path_without_links(str(candidate.parent if destination else candidate))
     if destination:
-        resolved = Path(candidate.parent).resolve(strict=True) / candidate.name
+        parent = candidate.parent
+        if create_parents:
+            while parent != parent.parent and not os.path.lexists(parent):
+                parent = parent.parent
+        local_path_without_links(str(parent))
+        resolved_parent = Path(parent).resolve(strict=True)
+        if create_parents and not resolved_parent.is_dir():
+            raise ValueError("Родитель назначения должен быть папкой")
+        resolved = resolved_parent / candidate.relative_to(parent)
         _validate(_windows_path(resolved), managed=managed)
     else:
+        local_path_without_links(str(candidate))
         validate_action_path(path, managed=managed)
     return Path(candidate)
 
@@ -158,10 +185,15 @@ def paths_overlap(left: str, right: str) -> bool:
     return first.is_relative_to(second) or second.is_relative_to(first)
 
 
-def quarantine_root(source: Path) -> Path:
+def reject_quarantine_overlap(path: str, protected: Iterable[str]) -> None:
+    if any(paths_overlap(path, location) for location in protected):
+        raise ValueError("Путь пересекается с управляемым карантином")
+
+
+def quarantine_root(source: Path, override: Path | None = None) -> Path:
     """Выбрать каталог карантина на томе источника."""
     default = Path(source.anchor) / QUARANTINE_NAME
-    root = config.QUARANTINE_DIR or default
+    root = override or config.QUARANTINE_DIR or default
     if root == default:
         local_path_without_links(root.anchor)
     else:

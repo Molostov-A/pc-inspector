@@ -8,8 +8,10 @@ import { render as plans } from "./pages/plans.js";
 import { render as history } from "./pages/history.js";
 import { render as duplicates } from "./pages/duplicates.js";
 import { render as stale } from "./pages/stale.js";
+import { render as organize } from "./pages/organize.js";
+import { render as settings } from "./pages/settings.js";
 
-const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history, "/duplicates": duplicates, "/stale": stale };
+const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history, "/duplicates": duplicates, "/stale": stale, "/organize": organize, "/settings": settings };
 const activities = {
   "/": "Читаем индекс и сводку по дискам…",
   "/explorer": "Читаем содержимое папки и строим карту…",
@@ -19,6 +21,8 @@ const activities = {
   "/history": "Читаем журнал и карантин…",
   "/duplicates": "Читаем готовые группы дубликатов…",
   "/stale": "Проверяем даты использования в индексе…",
+  "/organize": "Читаем индекс и готовим отчёт…",
+  "/settings": "Загружаем настройки сканирования и хранения…",
 };
 const page = document.querySelector("#page");
 const theme = document.querySelector("#theme");

@@ -36,6 +36,21 @@ class OpenRequest(BaseModel):
     path: Annotated[str, StringConstraints(min_length=1, max_length=32767)]
 
 
+class SettingsInput(BaseModel):
+    scan_roots: list[Annotated[str, StringConstraints(min_length=1, max_length=32767)]] = Field(
+        max_length=100
+    )
+    exclude_paths: list[Annotated[str, StringConstraints(min_length=1, max_length=32767)]] = Field(
+        max_length=500
+    )
+    projects_root: str = Field(max_length=32767)
+    stale_days: int
+    schedule_enabled: bool
+    schedule_day: str
+    schedule_time: str
+    quarantine_path: str = Field(max_length=32767)
+
+
 class PlanCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     note: str = Field(default="", max_length=2000)

@@ -26,6 +26,10 @@ def expand_windows_vars(text: str) -> str:
     return ntpath.expandvars(text)
 
 
+def downloads_dir() -> str:
+    return str(Path(os.environ.get("USERPROFILE") or Path.home()) / "Downloads")
+
+
 def app_data_roots() -> dict[str, str]:
     return {
         name: os.environ.get(name, fallback)

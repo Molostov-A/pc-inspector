@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS roots (
@@ -179,6 +179,28 @@ CREATE TABLE app_usage (
 """
 
 
+SCHEMA_V6 = """
+CREATE TABLE snapshots (
+    id INTEGER PRIMARY KEY,
+    root_path TEXT NOT NULL,
+    root_key TEXT NOT NULL,
+    taken_at REAL NOT NULL,
+    total_size INTEGER NOT NULL,
+    file_count INTEGER NOT NULL,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(root_key,taken_at)
+);
+CREATE TABLE snapshot_dirs (
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    path_key TEXT NOT NULL,
+    total_size INTEGER NOT NULL,
+    total_files INTEGER NOT NULL,
+    PRIMARY KEY(snapshot_id,path_key)
+);
+"""
+
+
 def migrate(con: sqlite3.Connection) -> None:
     """Довести схему до текущей версии без потери ранее записанных строк."""
     version = con.execute("PRAGMA user_version").fetchone()[0]
@@ -191,7 +213,7 @@ def migrate(con: sqlite3.Connection) -> None:
         if version > SCHEMA_VERSION:
             raise ValueError(f"Версия индекса {version} новее поддерживаемой ({SCHEMA_VERSION})")
         for next_version, schema in enumerate(
-            (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5), start=1
+            (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6), start=1
         ):
             if version < next_version:
                 for statement in schema.split(";"):

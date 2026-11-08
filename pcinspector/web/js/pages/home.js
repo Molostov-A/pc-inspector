@@ -36,13 +36,15 @@ function folderLink(item) {
 
 export async function render(container, _params, signal) {
   const options = { signal };
-  const [roots, drives, tree, junk] = await Promise.all([
+  const [roots, drives, tree, junk, preferences] = await Promise.all([
     api("roots", {}, options),
     api("drives", {}, options),
     api("folders/top", {}, options),
     api("analyzers/junk", { limit: 5 }, options),
+    api("settings", {}, options),
   ]);
   const indexed = roots.findings.filter(item => item.kind === "stat");
+  const scanRoots = preferences.scan_roots.length ? preferences.scan_roots : indexed.map(item => item.path);
   const latest = Math.max(0, ...indexed.map(item => item.meta.scanned_at ?? 0));
   const cards = el("section", "block", el("h2", "", "Локальные диски"));
   cards.append(drives.length ? el("div", "disks", ...drives.map(diskCard)) : message("Доступные локальные тома не найдены."));
@@ -66,13 +68,14 @@ export async function render(container, _params, signal) {
     heading("Индекс дисков", "Дисковое пространство", "Что занимает место и какие данные стоит проверить.",
       el("div", "row-actions",
         link("Найти дубликаты", "/duplicates", {}, "text-link"),
-        button(indexed.length ? "Пересканировать" : "Сканировать", "primary", () => scanDialog(indexed.map(item => item.path)))),
+        button(indexed.length ? "Пересканировать" : "Сканировать", "primary", () => scanDialog(scanRoots))),
     ),
     cards,
     el("div", "metrics",
       el("section", "panel metric", el("p", "eyebrow", "Можно освободить"), sized(junk.summary.safe_size), el("p", "muted", "Кэши и временные данные")),
       el("section", "panel metric review", el("p", "eyebrow", "Нужна проверка"), sized(junk.summary.review_size), el("p", "muted", "Файлы и папки для ручной оценки")),
-      el("section", "panel metric neutral", el("p", "eyebrow", "Рост с прошлого скана"), el("strong", "", "—"), el("p", "muted", "История сканов пока недоступна")),
+      el("section", "panel metric neutral", el("p", "eyebrow", "Рост с прошлого скана"), el("strong", "", "—"),
+        link("Открыть историю роста", "/organize", { tab: "growth" }, "text-link")),
     ),
     el("div", "split",
       ranking("Крупные папки", link("В обзор →", "/explorer", {}, "text-link"), tree.findings,

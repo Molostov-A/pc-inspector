@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..core import safety
+from ..core import safety, settings
 from ..core.fmt import DAY
 from . import plans, quarantine, snapshot
 
@@ -65,7 +65,7 @@ def _make_directories(directory: Path) -> None:
             current.mkdir()
         safety.local_path_without_links(str(current))
         if not current.is_dir():
-            raise ValueError("Компонент пути карантина не является папкой")
+            raise ValueError("Компонент пути назначения не является папкой")
 
 
 def _write_manifest(con: sqlite3.Connection, base: Path, plan_id: int) -> None:
@@ -93,7 +93,7 @@ def _reserve(
     error = None
     try:
         if item["action"] == "quarantine":
-            base, destination = quarantine.location(plan, Path(item["path"]))
+            base, destination = quarantine.location(plan, Path(item["path"]), settings.quarantine_path(con))
         elif item["action"] == "move":
             destination = Path(item["target"])
     except (OSError, ValueError) as ex:
@@ -130,7 +130,13 @@ def _apply(
         con.execute("BEGIN IMMEDIATE")
         try:
             source = safety.checked_action_path(item["path"])
-            plans.validate_operation(source, item["kind"], item["action"], item["target"])
+            plans.validate_operation(
+                source,
+                item["kind"],
+                item["action"],
+                item["target"],
+                quarantine_paths=quarantine.protected_paths(con),
+            )
             _check_snapshot(item, source)
         except (FileNotFoundError, ValueError) as ex:
             _log_result(con, item["id"], "skipped", str(ex))
@@ -139,8 +145,9 @@ def _apply(
             _log_result(con, item["id"], "failed", f"Не удалось проверить объект: {ex}")
             return
         try:
-            if base is not None and destination is not None:
+            if destination is not None:
                 _make_directories(destination.parent)
+            if base is not None:
                 _write_manifest(con, base, plan["id"])
             if destination is None:
                 send2trash(str(source))
@@ -211,9 +218,13 @@ def restore_action(con: sqlite3.Connection, action_id: int) -> dict[str, Any]:
         if not record["restorable"] or record["restored_at"] or record["purged_at"]:
             raise ValueError("Элемент недоступен для автоматического восстановления")
         source = safety.checked_action_path(record["src"], destination=True)
+        protected = quarantine.protected_paths(con)
+        safety.reject_quarantine_overlap(str(source), protected)
         if os.path.lexists(source):
             raise ValueError("Исходный путь уже занят. Существующий объект сохранён")
         moved = safety.checked_action_path(record["dst"], managed=record["action"] == "quarantine")
+        if record["action"] == "move":
+            safety.reject_quarantine_overlap(str(moved), protected)
         item = con.execute("SELECT * FROM plan_items WHERE id=?", (record["plan_item_id"],)).fetchone()
         _check_snapshot(item, moved)
         moved.rename(source)

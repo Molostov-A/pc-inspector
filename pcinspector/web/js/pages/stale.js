@@ -51,7 +51,7 @@ export async function render(container, params, signal) {
   feedback.setAttribute("role", "status");
   const error = el("p", "error");
   error.setAttribute("role", "alert");
-  const defaultDays = isApps ? "180" : "365";
+  const defaultDays = inventory ? "180" : String((await api("settings", {}, { signal })).stale_days);
   const days = params.get("days") ?? defaultDays;
   const controls = el("div", "row-actions");
   if (active !== "app_leftovers") {

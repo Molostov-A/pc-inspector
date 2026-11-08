@@ -13,7 +13,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from ..core import safety
-from . import snapshot
+from . import quarantine, snapshot
 
 Action = Literal["recycle", "quarantine", "move", "delete_empty_dir"]
 Author = Literal["user", "ai"]
@@ -149,7 +149,10 @@ def validate_operation(
     kind: str,
     action: Action,
     target: str | None,
+    *,
+    quarantine_paths: tuple[str, ...] = (),
 ) -> str | None:
+    safety.reject_quarantine_overlap(str(path), quarantine_paths)
     if action not in ACTIONS:
         raise ValueError("Неизвестное действие")
     if action == "delete_empty_dir" and kind != "dir":
@@ -160,7 +163,8 @@ def validate_operation(
         return None
     if not target:
         raise ValueError("Укажите полный путь назначения")
-    destination = safety.checked_action_path(target, destination=True)
+    destination = safety.checked_action_path(target, destination=True, create_parents=True)
+    safety.reject_quarantine_overlap(str(destination), quarantine_paths)
     if safety.paths_overlap(str(path), str(destination)):
         raise ValueError("Источник и назначение пересекаются")
     if path.drive.lower() != destination.drive.lower():
@@ -201,6 +205,7 @@ def add_items(
         con.execute("BEGIN IMMEDIATE")
         require_plan(con, plan_id, draft=True)
         existing = list(con.execute("SELECT * FROM plan_items WHERE plan_id = ?", (plan_id,)))
+        quarantine_paths = quarantine.protected_paths(con)
         if keep_path is not None:
             keep_path = str(safety.checked_action_path(keep_path))
             kind, _ = _indexed(con, keep_path)
@@ -223,12 +228,14 @@ def add_items(
                 kind, indexed = _indexed(con, str(path))
                 if indexed["protected"] or indexed["mtime"] is None:
                     raise ValueError("Защищённый путь или неполные данные в индексе")
-                target = validate_operation(path, kind, item.action, item.target)
                 if keep_path is not None and (
                     safety.paths_overlap(keep_path, str(path))
-                    or (target is not None and safety.paths_overlap(keep_path, target))
+                    or (item.target is not None and safety.paths_overlap(keep_path, item.target))
                 ):
                     raise ValueError("Пункт затрагивает копию, выбранную для сохранения")
+                target = validate_operation(
+                    path, kind, item.action, item.target, quarantine_paths=quarantine_paths
+                )
                 _check_overlap(str(path), target, existing)
                 indexed_path = indexed["path"] if kind == "dir" else str(path)
                 entries = (
@@ -293,7 +300,13 @@ def edit_item(
             destination = target if target is not None else item["target"] if operation == "move" else None
             if action is not None or target is not None:
                 source = safety.checked_action_path(item["path"])
-                destination = validate_operation(source, item["kind"], operation, destination)
+                destination = validate_operation(
+                    source,
+                    item["kind"],
+                    operation,
+                    destination,
+                    quarantine_paths=quarantine.protected_paths(con),
+                )
                 _check_overlap(item["path"], destination, [row for row in existing if row["id"] != item_id])
             con.execute(
                 "UPDATE plan_items SET action=?, target=?, selected=? WHERE id=?",

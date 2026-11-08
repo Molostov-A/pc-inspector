@@ -23,7 +23,7 @@ from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
 from .analyzers.overview import directory_finding, find_directory
 from .collectors import hashing
-from .core import db, jobs, safety, scanner
+from .core import db, jobs, safety, scanner, settings
 from .core.fmt import DAY, human_size, parse_size
 from .core.models import Finding, Report
 
@@ -34,7 +34,7 @@ def _db_path(db_path: Path | str | None) -> Path:
 
 def start_scan(paths: list[str], *, db_path: Path | str | None = None) -> str:
     roots = {}
-    for path in paths or scanner.local_ntfs_roots():
+    for path in paths or get_settings(db_path=db_path)["scan_roots"] or scanner.local_ntfs_roots():
         root = scanner.normalize_root(path)
         roots.setdefault(root.casefold(), root)
     if not roots:
@@ -255,7 +255,19 @@ def run_analyzer(analyzer_id: str, *, db_path: Path | str | None = None, **param
     analyzer = get(analyzer_id)
     with closing(_read_index(db_path)) as con, con:
         con.execute("BEGIN")
+        if analyzer_id in {"stale_files", "forgotten_dirs"} and params.get("days") is None:
+            params["days"] = settings.load(con)["stale_days"]
         return analyzer(con, **params)
+
+
+def get_settings(*, db_path: Path | str | None = None) -> settings.Settings:
+    with closing(_read_index(db_path)) as con:
+        return settings.load(con)
+
+
+def save_settings(value: settings.Settings, *, db_path: Path | str | None = None) -> settings.Settings:
+    with closing(db.connect(_db_path(db_path))) as con:
+        return settings.save(con, value)
 
 
 def list_roots(*, db_path: Path | str | None = None) -> Report:
@@ -534,7 +546,7 @@ def ai_brief(max_items: int = 15, *, db_path: Path | str | None = None) -> str:
             )
             if not folders:
                 lines.append("Подходящих папок нет.")
-        forgotten = get("forgotten_dirs")(con, limit=limit)
+        forgotten = get("forgotten_dirs")(con, limit=limit, days=settings.load(con)["stale_days"])
         lines.extend(["", "## Забытые папки", ""])
         lines.extend(
             f"- {_markdown_cell(item.path or item.title)} — {human_size(item.size)}. {item.reason}"
@@ -562,7 +574,12 @@ def ai_brief(max_items: int = 15, *, db_path: Path | str | None = None) -> str:
         lines.extend(applications.notes)
         if not applications.findings and "collected_at" in applications.summary:
             lines.append("В выбранном диапазоне подходящих программ нет.")
-        lines.append("История роста появится после этапа снимков.")
+        growth = get("growth")(con, limit=limit)
+        lines.extend(["", "### Рост папок"])
+        for item in growth.findings:
+            sign = "+" if item.meta["delta"] > 0 else "−"
+            lines.append(f"- {_markdown_cell(item.title)} — {sign}{human_size(item.size)}.")
+        lines.extend(growth.notes)
 
     text = "\n".join(lines) + "\n"
     if len(text) > 12_000:

@@ -4,7 +4,7 @@ import { sizeBar } from "./sizeBar.js";
 
 const label = item => item.title.startsWith("[") ? item.title : item.path || item.title;
 
-export function reportTable(report, { explorer = false, openPath = null, showFiles = true, planControl = null, appControl = null } = {}) {
+export function reportTable(report, { explorer = false, openPath = null, showFiles = true, planControl = null, appControl = null, preview = false, delta = false } = {}) {
   const panel = el("div", "report");
   for (const note of report.notes ?? []) panel.append(message(note, "note"));
   const rows = report.findings ?? [];
@@ -14,12 +14,14 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
   }
   const total = report.summary?.total_size ?? report.total_size;
   const cols = [
-    { name: appControl ? "Программа" : explorer ? "Папка или файл" : "Путь или название", value: item => appControl ? item.title : label(item),
+    { name: preview ? "Было" : appControl ? "Программа" : explorer ? "Папка или файл" : "Путь или название", value: item => appControl ? item.title : label(item),
       cell: item => explorer && item.kind === "dir" && item.path
         ? link(item.title, "/explorer", { path: item.path, files: showFiles ? "1" : "0" }, "text-link")
         : appControl ? el("div", "", item.title, item.meta.version ? el("p", "muted", item.meta.version) : null)
           : explorer ? item.title : label(item) },
-    { name: "Размер", value: item => item.size, cell: item => sized(item.size) },
+    ...(preview ? [{ name: "Станет", value: item => item.meta.target, cell: item => item.meta.target }] : []),
+    { name: delta ? "Изменение" : "Размер", value: item => item.size,
+      cell: item => delta ? el("span", "", item.meta.delta > 0 ? "+" : "−", sized(item.size)) : sized(item.size) },
     ...(explorer ? [
       { name: "Доля", value: item => item.size, cell: item => sizeBar(item.size, total) },
       { name: "Файлов", value: item => item.meta.files ?? 0, cell: item => number(item.meta.files) },
@@ -43,7 +45,7 @@ export function reportTable(report, { explorer = false, openPath = null, showFil
   const count = el("span", "muted");
   const head = el("tr");
   const body = el("tbody");
-  let selected = 1;
+  let selected = preview ? 2 : 1;
   let direction = -1;
   const headers = cols.map((col, index) => {
     const control = el("button", "sort", col.name);

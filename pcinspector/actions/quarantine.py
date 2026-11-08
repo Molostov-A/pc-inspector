@@ -6,12 +6,22 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from ..core import safety
+from ..core import safety, settings
 
 
-def location(plan: sqlite3.Row, source: Path) -> tuple[Path, Path]:
-    base = safety.quarantine_root(source) / f"{plan['id']}-{plan['storage_key']}"
+def location(plan: sqlite3.Row, source: Path, override: Path | None = None) -> tuple[Path, Path]:
+    base = safety.quarantine_root(source, override) / f"{plan['id']}-{plan['storage_key']}"
     return base, base / "payload" / source.relative_to(source.anchor)
+
+
+def protected_paths(con: sqlite3.Connection) -> tuple[str, ...]:
+    """Сохранить защиту элементов при смене папки карантина."""
+    current = settings.quarantine_path(con)
+    pending = con.execute(
+        "SELECT dst FROM actions_log WHERE action='quarantine' AND restorable=1 "
+        "AND dst IS NOT NULL AND restored_at IS NULL AND purged_at IS NULL",
+    )
+    return ((str(current),) if current else ()) + tuple(row["dst"] for row in pending)
 
 
 def entries(

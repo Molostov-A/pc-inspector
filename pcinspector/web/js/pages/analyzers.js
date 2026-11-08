@@ -28,6 +28,9 @@ function inputFor(name, schema) {
 export async function render(container, params, signal) {
   const catalog = await api("analyzers", {}, { signal });
   const active = catalog.find(item => item.id === params.get("id")) ?? catalog[0];
+  if (["stale_files", "forgotten_dirs"].includes(active.id)) {
+    active.schema.properties.days.default = (await api("settings", {}, { signal })).stale_days;
+  }
   const nav = el("nav", "analyzer-nav");
   nav.setAttribute("aria-label", "Список анализаторов");
   for (const item of catalog) {
@@ -53,9 +56,11 @@ export async function render(container, params, signal) {
       const feedback = el("div");
       feedback.hidden = true;
       result.replaceChildren(el("div", "section-head", el("h2", "", "Результат"), sized(report.total_size)),
-        feedback, reportTable(report, { planControl: item => ["file", "dir"].includes(item.kind)
+        feedback, reportTable(report, { preview: active.id === "downloads_sort", delta: active.id === "growth",
+          planControl: item => active.id !== "growth" && ["file", "dir"].includes(item.kind)
           ? button("В план", "secondary small", () => addToPlan([{
             path: item.path, reason: item.reason ?? "", safety: item.safety, source: active.id,
+            action: item.meta.action, target: item.meta.target,
           }], feedback)) : null }));
     } catch (error) {
       if (!signal.aborted) result.replaceChildren(message(error.message, "error"));

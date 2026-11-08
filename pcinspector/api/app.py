@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 
-from .routes import plans, reports, scan
+from .routes import plans, reports, scan, settings
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -103,6 +103,7 @@ def create_app(*, port: int = DEFAULT_PORT, db_path: Path | str | None = None) -
     app.include_router(reports.router)
     app.include_router(scan.router)
     app.include_router(plans.router)
+    app.include_router(settings.router)
     for directory in ("css", "js", "vendor"):
         app.mount(f"/{directory}", StaticFiles(directory=WEB_DIR / directory), name=directory)
     return app

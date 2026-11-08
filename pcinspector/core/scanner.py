@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -15,7 +14,7 @@ from dataclasses import dataclass
 from threading import Event
 from typing import TypedDict
 
-from . import db
+from . import db, settings, snapshots
 from .safety import is_protected, local_path_without_links
 
 REPARSE = stat.FILE_ATTRIBUTE_REPARSE_POINT
@@ -113,10 +112,7 @@ def local_drives() -> list[Drive]:
 
 
 def _exclude_paths(con: sqlite3.Connection, root: str) -> set[str]:
-    setting = con.execute("SELECT value FROM settings WHERE key = ?", ("exclude_paths",)).fetchone()
-    if setting is None:
-        return set()
-    paths = json.loads(setting[0])
+    paths = settings.load(con)["exclude_paths"]
     if not isinstance(paths, list) or not all(isinstance(path, str) and path.strip() for path in paths):
         raise ValueError("Настройка exclude_paths должна быть списком непустых путей")
     return {normalize_root(os.path.join(root, path)).casefold() for path in paths}
@@ -340,6 +336,7 @@ def _scan(
     )
 
     for old_id in previous_roots:
+        snapshots.record(con, old_id)
         for table in ("files", "dirs", "errors"):
             check_cancelled()
             con.execute(f"DELETE FROM {table} WHERE root_id = ?", (old_id,))
@@ -372,6 +369,8 @@ def _scan(
         ),
     )
     notify(root, force=True)
+    check_cancelled()
+    snapshots.record(con, root_id)
     check_cancelled()
     return ScanResult(
         root=root,
