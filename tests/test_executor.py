@@ -165,6 +165,7 @@ def test_modern_recycle_wrapper_only_calls_mock(tmp_path: Path, monkeypatch: pyt
     calls: list[str] = []
     path = str(tmp_path / "file")
     monkeypatch.setattr(modern, "send2trash", calls.append)
+    monkeypatch.setattr(executor.recycle_bin, "ensure_recyclable", lambda _path: None)
     _NATIVE_RECYCLE(path)
     assert calls == [path]
 

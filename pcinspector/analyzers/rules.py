@@ -129,6 +129,9 @@ def category(ext: str) -> str:
     return EXT_TO_CAT.get(ext, "Прочее")
 
 
+CLEAR = "clear_contents"
+CLEAR_HINT = "Папка останется. Свежие и занятые файлы будут пропущены"
+
 # Папки по имени (берётся самая верхняя, вложенные не считаются дважды)
 DIR_NAME_RULES = [
     {
@@ -163,11 +166,39 @@ DIR_NAME_RULES = [
     },
     {
         "id": "browser_cache",
-        "names": ["Cache", "Code Cache", "GPUCache", "CacheStorage", "ShaderCache", "GrShaderCache"],
+        "names": ["Cache", "Code Cache", "GPUCache", "ShaderCache", "GrShaderCache"],
         "safety": "safe",
-        "title": "Кэш браузеров и Electron-приложений",
-        "hint": "Закройте браузер перед очисткой",
+        "title": "Кэш браузеров на Chromium",
+        "hint": CLEAR_HINT,
+        "path_like": "%\\AppData\\%\\User Data\\%",
+        "action": CLEAR,
+    },
+    {
+        "id": "firefox_cache",
+        "names": ["cache2", "startupCache", "shader-cache"],
+        "safety": "safe",
+        "title": "Кэш Firefox",
+        "hint": CLEAR_HINT,
+        "path_like": "%\\Mozilla\\Firefox\\Profiles\\%",
+        "action": CLEAR,
+    },
+    {
+        "id": "engine_cache",
+        "names": ["Code Cache", "GPUCache", "ShaderCache", "GrShaderCache"],
+        "safety": "safe",
+        "title": "Кэш движка Electron-приложений",
+        "hint": CLEAR_HINT,
         "path_like": "%\\AppData\\%",
+        "action": CLEAR,
+    },
+    {
+        "id": "app_cache",
+        "names": ["Cache", "CacheStorage"],
+        "safety": "review",
+        "title": "Кэши других приложений",
+        "hint": "Часть данных придётся скачивать или пересоздавать заново. Проверьте программу-владельца",
+        "path_like": "%\\AppData\\%",
+        "action": CLEAR,
     },
 ]
 
@@ -178,7 +209,16 @@ DIR_PATH_RULES = [
         "like": "%\\AppData\\Local\\Temp",
         "safety": "safe",
         "title": "Временные файлы пользователя (%TEMP%)",
-        "hint": "Безопасно; занятые файлы пропустятся",
+        "hint": CLEAR_HINT,
+        "action": CLEAR,
+    },
+    {
+        "id": "unity_cache",
+        "like": "%\\AppData\\Local\\Unity\\cache",
+        "safety": "review",
+        "title": "Кэш Unity",
+        "hint": "Редактор пересоздаст кэш, но импорт и загрузка пакетов займут время",
+        "action": CLEAR,
     },
     {
         "id": "win_temp",
@@ -206,14 +246,16 @@ DIR_PATH_RULES = [
         "like": "%\\AppData\\Local\\pip\\cache",
         "safety": "safe",
         "title": "Кэш pip",
-        "hint": "pip cache purge",
+        "hint": "pip скачает пакеты заново. Папка останется",
+        "action": CLEAR,
     },
     {
         "id": "npm_cache",
         "like": "%\\AppData\\Local\\npm-cache",
         "safety": "safe",
         "title": "Кэш npm",
-        "hint": "npm cache clean --force",
+        "hint": "npm скачает пакеты заново. Папка останется",
+        "action": CLEAR,
     },
     {
         "id": "nuget_cache",
@@ -242,6 +284,7 @@ DIR_PATH_RULES = [
         "safety": "safe",
         "title": "Аварийные дампы приложений",
         "hint": "Нужны только для отладки",
+        "action": CLEAR,
     },
     {
         "id": "wer",
@@ -249,13 +292,15 @@ DIR_PATH_RULES = [
         "safety": "safe",
         "title": "Отчёты об ошибках Windows",
         "hint": "Нужны только для отладки",
+        "action": CLEAR,
     },
     {
         "id": "thumbcache",
         "like": "%\\Microsoft\\Windows\\Explorer",
         "safety": "safe",
         "title": "Кэш эскизов Проводника",
-        "hint": "Пересоздаётся (очистка через cleanmgr)",
+        "hint": "Пересоздаётся. Файлы, занятые Проводником, будут пропущены",
+        "action": CLEAR,
     },
     {
         "id": "installer_cache",
@@ -277,19 +322,27 @@ FILE_RULES = [
         "hint": "Обычно не нужны после установки",
     },
     {
+        "id": "crashpad_dumps",
+        "dir_like": "%\\Crashpad\\%",
+        "exts": ["dmp"],
+        "safety": "safe",
+        "title": "Отчёты о сбоях приложений (Crashpad)",
+        "hint": "Нужны только для отладки",
+    },
+    {
         "id": "dumps",
         "dir_like": "%",
         "exts": ["dmp", "hdmp", "mdmp"],
-        "safety": "safe",
-        "title": "Файлы дампов памяти",
-        "hint": "Нужны только для отладки",
+        "safety": "review",
+        "title": "Файлы с расширением дампа",
+        "hint": "Обычно это дампы памяти, но .dmp используют и программы для своих данных",
     },
     {
         "id": "partial",
         "dir_like": "%",
         "exts": ["crdownload", "part", "partial"],
-        "safety": "safe",
+        "safety": "review",
         "title": "Недокачанные файлы",
-        "hint": "Обрывки загрузок",
+        "hint": "Обрывки загрузок. Проверьте, что загрузка не идёт прямо сейчас",
     },
 ]

@@ -15,16 +15,19 @@ from uuid import uuid4
 
 from ..core import safety, settings
 from ..core.fmt import DAY
-from . import plans, quarantine, snapshot
+from . import plans, quarantine, recycle_bin, snapshot
 
 logger = logging.getLogger(__name__)
+# Файлы моложе суток могут использоваться запущенными программами.
+CLEAR_MIN_AGE = DAY
 
 
 def send2trash(path: str) -> None:
-    """Использовать современную Windows-корзину с запретом постоянного удаления."""
+    """Отправить в Корзину только то, что она примет, не удалив объект безвозвратно."""
     from pywintypes import com_error
     from send2trash.win.modern import send2trash as recycle
 
+    recycle_bin.ensure_recyclable(path)
     try:
         recycle(path)
     except com_error as ex:
@@ -49,7 +52,7 @@ def _log_result(
 def _check_snapshot(item: sqlite3.Row, path: Path) -> None:
     entries = snapshot.live_entries(path)
     first = next(entries)
-    if first[1] != item["kind"] or first[3] != item["expected_mtime"]:
+    if first[1] != item["kind"] or (first[1] == "file" and first[3] != item["expected_mtime"]):
         raise ValueError("Объект изменился после анализа")
     if item["action"] == "delete_empty_dir" and next(entries, None) is not None:
         raise ValueError("Папка больше не пуста")
@@ -71,7 +74,8 @@ def _make_directories(directory: Path) -> None:
 def _write_manifest(con: sqlite3.Connection, base: Path, plan_id: int) -> None:
     rows = con.execute(
         "SELECT l.id,l.src,l.dst,l.at,l.size FROM actions_log l "
-        "JOIN plan_items p ON p.id=l.plan_item_id WHERE p.plan_id=? AND l.action='quarantine' AND l.dst IS NOT NULL",
+        "JOIN plan_items p ON p.id=l.plan_item_id "
+        "WHERE p.plan_id=? AND l.action IN ('quarantine','clear_contents') AND l.dst IS NOT NULL",
         (plan_id,),
     )
     entries = [dict(row) for row in rows if Path(row["dst"]).is_relative_to(base)]
@@ -92,7 +96,7 @@ def _reserve(
     base = destination = None
     error = None
     try:
-        if item["action"] == "quarantine":
+        if item["action"] in quarantine.STORED_ACTIONS:
             base, destination = quarantine.location(plan, Path(item["path"]), settings.quarantine_path(con))
         elif item["action"] == "move":
             destination = Path(item["target"])
@@ -119,6 +123,40 @@ def _reserve(
     return base, destination, error is None
 
 
+def _clear_contents(plan: sqlite3.Row, source: Path, destination: Path) -> tuple[int, int, int]:
+    """Перенести в карантин дочерние объекты папки, пропустив свежие и занятые."""
+    cutoff = min(time.time() - CLEAR_MIN_AGE, plan["created_at"])
+    moved = size = skipped = 0
+    with os.scandir(source) as entries:
+        children = [entry.path for entry in entries]
+    for path in children:
+        try:
+            child = safety.checked_action_path(path)
+            items = list(snapshot.live_entries(child))
+            if any(kind == "file" and mtime >= cutoff for _, kind, _, mtime in items):
+                skipped += 1
+                continue
+            _make_directories(destination)
+            child.rename(destination / child.name)
+        except (OSError, ValueError) as ex:
+            logger.info("Очистка папки, пропущен %s: %s", path, ex)
+            skipped += 1
+            continue
+        moved += 1
+        size += sum(entry[2] for entry in items)
+    return moved, size, skipped
+
+
+def _finish_clear(con: sqlite3.Connection, item: sqlite3.Row, moved: int, size: int, skipped: int) -> None:
+    if not moved:
+        _log_result(con, item["id"], "skipped", "Все объекты свежие или заняты другими программами")
+        return
+    con.execute("UPDATE plan_items SET size=? WHERE id=?", (size, item["id"]))
+    con.execute("UPDATE actions_log SET size=? WHERE plan_item_id=?", (size, item["id"]))
+    note = f"Перенесено {moved}, пропущено свежих или занятых {skipped}" if skipped else None
+    _log_result(con, item["id"], "done", note, True)
+
+
 def _apply(
     con: sqlite3.Connection,
     plan: sqlite3.Row,
@@ -137,7 +175,10 @@ def _apply(
                 item["target"],
                 quarantine_paths=quarantine.protected_paths(con),
             )
-            _check_snapshot(item, source)
+            if item["action"] != "clear_contents":
+                _check_snapshot(item, source)
+            elif not source.is_dir():
+                raise ValueError("Объект больше не является папкой")
         except (FileNotFoundError, ValueError) as ex:
             _log_result(con, item["id"], "skipped", str(ex))
             return
@@ -149,6 +190,9 @@ def _apply(
                 _make_directories(destination.parent)
             if base is not None:
                 _write_manifest(con, base, plan["id"])
+            if item["action"] == "clear_contents":
+                _finish_clear(con, item, *_clear_contents(plan, source, destination))
+                return
             if destination is None:
                 send2trash(str(source))
             else:
@@ -207,6 +251,30 @@ def history(con: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(row) for row in con.execute("SELECT * FROM actions_log ORDER BY id DESC LIMIT 500")]
 
 
+def _restore_contents(con: sqlite3.Connection, record: sqlite3.Row) -> dict[str, Any]:
+    source = safety.checked_action_path(record["src"], destination=True)
+    if not source.is_dir():
+        raise ValueError("Исходная папка отсутствует. Создайте её и повторите откат")
+    moved = safety.checked_action_path(record["dst"], managed=True)
+    with os.scandir(moved) as entries:
+        children = [Path(entry.path) for entry in entries]
+    occupied = 0
+    for child in children:
+        if os.path.lexists(source / child.name):
+            occupied += 1
+        else:
+            child.rename(source / child.name)
+    if occupied:
+        return {
+            "restored": False,
+            "message": f"Не возвращено объектов: {occupied}. Такие имена уже заняты, они остались в карантине",
+        }
+    now = time.time()
+    con.execute("UPDATE actions_log SET restored_at=? WHERE id=?", (now, record["id"]))
+    logger.info("Откат очистки %s: %s", record["id"], source)
+    return {"restored": True, "path": str(source), "restored_at": now}
+
+
 def restore_action(con: sqlite3.Connection, action_id: int) -> dict[str, Any]:
     with con:
         con.execute("BEGIN IMMEDIATE")
@@ -217,6 +285,8 @@ def restore_action(con: sqlite3.Connection, action_id: int) -> dict[str, Any]:
             return {"restored": False, "message": "Откройте Корзину Windows и восстановите элемент вручную"}
         if not record["restorable"] or record["restored_at"] or record["purged_at"]:
             raise ValueError("Элемент недоступен для автоматического восстановления")
+        if record["action"] == "clear_contents":
+            return _restore_contents(con, record)
         source = safety.checked_action_path(record["src"], destination=True)
         protected = quarantine.protected_paths(con)
         safety.reject_quarantine_overlap(str(source), protected)
@@ -250,7 +320,8 @@ def purge_quarantine(con: sqlite3.Connection, older_than_days: int, *, confirmed
                 item = con.execute(
                     "SELECT * FROM plan_items WHERE id=?", (record["plan_item_id"],)
                 ).fetchone()
-                _check_snapshot(item, path)
+                if item["action"] != "clear_contents":
+                    _check_snapshot(item, path)
                 send2trash(str(path))
             except (OSError, ValueError, ImportError) as ex:
                 errors.append({"id": record["id"], "reason": str(ex)})

@@ -35,7 +35,7 @@ export async function render(container, _params, signal) {
           check.checked = selected.has(entry.path);
           check.addEventListener("change", () => {
             if (check.checked) selected.set(entry.path, {
-              path: entry.path, reason: item.reason ?? "", safety: item.safety, source: "junk",
+              path: entry.path, action: entry.action, reason: item.reason ?? "", safety: item.safety, source: "junk",
             });
             else selected.delete(entry.path);
             add.disabled = !selected.size;

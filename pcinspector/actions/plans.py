@@ -15,9 +15,9 @@ from uuid import uuid4
 from ..core import safety
 from . import quarantine, snapshot
 
-Action = Literal["recycle", "quarantine", "move", "delete_empty_dir"]
+Action = Literal["recycle", "quarantine", "move", "delete_empty_dir", "clear_contents"]
 Author = Literal["user", "ai"]
-ACTIONS = ("recycle", "quarantine", "move", "delete_empty_dir")
+ACTIONS = ("recycle", "quarantine", "move", "delete_empty_dir", "clear_contents")
 MAX_ITEMS = 500
 
 
@@ -157,6 +157,8 @@ def validate_operation(
         raise ValueError("Неизвестное действие")
     if action == "delete_empty_dir" and kind != "dir":
         raise ValueError("Для этого действия нужна пустая папка")
+    if action == "clear_contents" and kind != "dir":
+        raise ValueError("Очистить содержимое можно только у папки")
     if action != "move":
         if target is not None:
             raise ValueError("Назначение требуется только для перемещения")

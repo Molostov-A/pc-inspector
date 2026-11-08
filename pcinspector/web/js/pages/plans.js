@@ -5,6 +5,7 @@ import { button, date, el, heading, href, link, message, number, sized } from ".
 
 export const actions = {
   recycle: "В Корзину", quarantine: "В карантин", move: "Переместить", delete_empty_dir: "Пустую папку в Корзину",
+  clear_contents: "Очистить содержимое",
 };
 export const states = {
   draft: "Черновик", executing: "Выполняется", executed: "Выполнен", partially: "Выполнен частично",

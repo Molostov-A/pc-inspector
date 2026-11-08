@@ -59,7 +59,9 @@ def _parser() -> argparse.ArgumentParser:
         if name == "add":
             entry.add_argument("path")
             entry.add_argument(
-                "--action", choices=("recycle", "quarantine", "move", "delete_empty_dir"), default="recycle"
+                "--action",
+                choices=("recycle", "quarantine", "move", "delete_empty_dir", "clear_contents"),
+                default="recycle",
             )
             entry.add_argument("--target")
             entry.add_argument("--reason", default="")

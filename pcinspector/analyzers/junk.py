@@ -13,7 +13,8 @@ from ..core.models import Finding, Report
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, register, root_filter
 from .rules import DIR_NAME_RULES, DIR_PATH_RULES, FILE_RULES
 
-RULES = (*DIR_NAME_RULES, *DIR_PATH_RULES, *FILE_RULES)
+# При совпадении пути побеждает правило, стоящее раньше: точные пути идут перед именами.
+RULES = (*DIR_PATH_RULES, *DIR_NAME_RULES, *FILE_RULES)
 DIR_COLUMNS = "d.path, d.name, d.total_size AS size, d.newest_mtime AS mtime, d.total_files AS files"
 
 
@@ -95,7 +96,7 @@ def _candidates(con: sqlite3.Connection, root: str, min_size: int) -> Iterator[t
             continue
         previous = path
         rule = RULES[row["rule"]]
-        meta = {"hint": rule["hint"]}
+        meta = {"hint": rule["hint"], "action": rule.get("action", "recycle")}
         if row["is_dir"]:
             prefix = path.rstrip(os.sep) + os.sep
             meta.update(files=row["files"], newest_mtime=row["mtime"])
@@ -155,7 +156,10 @@ class Junk(Analyzer):
                     reason=f"{total.count} шт. — {rule['hint']}",
                     meta={
                         "count": total.count,
-                        "top": [{"path": item.path, "size": item.size} for item in total.largest()],
+                        "top": [
+                            {"path": item.path, "size": item.size, "action": item.meta["action"]}
+                            for item in total.largest()
+                        ],
                     },
                 )
             )

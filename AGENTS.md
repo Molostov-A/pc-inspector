@@ -82,7 +82,7 @@ core/ (db, models, safety, fmt, jobs), config.py
    Отдельный экран в UI — только если это предусмотрено ТЗ.
 
 ### 5.2. Новое правило мусора
-Только данные в `analyzers/rules.py` (`DIR_NAME_RULES`, `DIR_PATH_RULES`, `FILE_RULES`). Поля: `id`, `title`, `safety`, `hint` + условие.
+Только данные в `analyzers/rules.py` (`DIR_NAME_RULES`, `DIR_PATH_RULES`, `FILE_RULES`). Поля: `id`, `title`, `safety`, `hint` + условие. Для активных кэшей добавляйте `"action": "clear_contents"`. Точные пути срабатывают раньше правил по имени.
 В SQL `LIKE` подстановочный символ одной буквы — `_` (не `?`). `safe` ставить только для того,
 что гарантированно восстанавливается само (кэш, temp). Сомневаетесь — `review`. Добавить кейс в тест `junk`.
 

@@ -33,7 +33,7 @@ def directory_index(con: sqlite3.Connection, directory_id: int) -> Iterator[Entr
         WITH RECURSIVE subtree(id) AS (
             SELECT ? UNION ALL SELECT d.id FROM dirs d JOIN subtree p ON d.parent_id = p.id
         )
-        SELECT path, 'dir', 0, mtime FROM dirs JOIN subtree USING(id)
+        SELECT path, 'dir', 0, 0.0 FROM dirs JOIN subtree USING(id)
         UNION ALL
         SELECT path, 'file', size, mtime FROM files_v JOIN subtree ON subtree.id = files_v.dir_id
         """,
@@ -49,7 +49,8 @@ def _entry(path: Path, info: os.stat_result) -> Entry:
     if getattr(info, "st_file_attributes", 0) & (0x400000 | 0x1000 | stat.FILE_ATTRIBUTE_REPARSE_POINT):
         raise ValueError("В дереве есть ссылка или облачная заглушка")
     if stat.S_ISDIR(info.st_mode):
-        return str(path), "dir", 0, info.st_mtime
+        # NTFS отдаёт дату папки из листинга родителя с задержкой. Состав дерева видно по файлам.
+        return str(path), "dir", 0, 0.0
     if not stat.S_ISREG(info.st_mode):
         raise ValueError("В дереве есть объект, отличный от обычного файла или папки")
     return str(path), "file", info.st_size, info.st_mtime
