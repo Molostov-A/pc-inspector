@@ -174,3 +174,7 @@ claude mcp add --transport stdio pc-inspector -- "<папка проекта>\.v
 - [AGENTS.md](AGENTS.md) — архитектура и правила для ИИ-разработчиков
 
 Веб-интерфейс использует [Apache ECharts](https://echarts.apache.org/), его лицензия находится в `pcinspector/web/vendor/`.
+
+## Лицензия
+
+Проект распространяется по лицензии [MIT](LICENSE). Apache ECharts распространяется по собственной лицензии Apache 2.0.
