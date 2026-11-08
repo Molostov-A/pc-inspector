@@ -1,0 +1,223 @@
+# Правила поиска мусора и категории файлов.
+# safe — восстановится само; review — решает человек.
+# Порядок важен: при совпадении пути побеждает правило выше.
+# В like/dir_like/path_like: % — любая строка, _ — один символ.
+
+# Папки AppData, которые не считаются остатками удалённых программ.
+app_leftover_system_names = ['Microsoft', 'Packages', 'Temp', 'Programs', 'Windows', 'Application Data', 'Local Settings', 'Start Menu', 'Desktop', 'Documents', 'Favorites', 'Templates', 'ConnectedDevicesPlatform', 'Comms', 'CrashDumps', 'D3DSCache', 'VirtualStore', 'Package Cache', 'USOPrivate', 'USOShared', 'SoftwareDistribution', 'DeliveryOptimization', 'regid.1991-06.com.microsoft', 'Microsoft Help']
+
+[categories]
+'Видео' = ['avi', 'flv', 'm2ts', 'm4v', 'mkv', 'mov', 'mp4', 'mts', 'ts', 'vob', 'webm', 'wmv']
+'Аудио' = ['aac', 'aiff', 'flac', 'm4a', 'mp3', 'ogg', 'opus', 'wav', 'wma']
+'Изображения' = ['arw', 'bmp', 'cr2', 'dng', 'gif', 'heic', 'ico', 'jpeg', 'jpg', 'nef', 'png', 'psd', 'raw', 'svg', 'tif', 'tiff', 'webp']
+'Документы' = ['csv', 'djvu', 'doc', 'docx', 'epub', 'fb2', 'md', 'ods', 'odt', 'pdf', 'ppt', 'pptx', 'rtf', 'txt', 'xls', 'xlsx']
+'Архивы' = ['7z', 'bz2', 'cab', 'gz', 'rar', 'tar', 'xz', 'zip', 'zst']
+'Образы дисков' = ['esd', 'img', 'iso', 'qcow2', 'vdi', 'vhd', 'vhdx', 'vmdk', 'wim']
+'Установщики' = ['appx', 'exe', 'msi', 'msix', 'msixbundle']
+'Модели ИИ / веса' = ['bin', 'ckpt', 'gguf', 'h5', 'nemo', 'onnx', 'pb', 'pt', 'pth', 'safetensors', 'tflite']
+'Код' = ['c', 'cpp', 'cs', 'css', 'go', 'h', 'hpp', 'html', 'ipynb', 'java', 'js', 'json', 'jsx', 'ps1', 'py', 'rs', 'sh', 'sql', 'toml', 'ts', 'tsx', 'xml', 'yaml', 'yml']
+'Библиотеки / бинарники' = ['dat', 'db', 'dll', 'lib', 'pak', 'pyd', 'so', 'sys']
+'Временные / логи' = ['bak', 'crdownload', 'dmp', 'log', 'old', 'part', 'temp', 'tmp']
+
+[[dir_path]]
+id = 'user_temp'
+like = '%\AppData\Local\Temp'
+safety = 'safe'
+title = 'Временные файлы пользователя (%TEMP%)'
+hint = 'Папка останется. Свежие и занятые файлы будут пропущены'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'unity_cache'
+like = '%\AppData\Local\Unity\cache'
+safety = 'review'
+title = 'Кэш Unity'
+hint = 'Редактор пересоздаст кэш, но импорт и загрузка пакетов займут время'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'win_temp'
+like = '_:\Windows\Temp'
+safety = 'safe'
+title = 'Временные файлы Windows'
+hint = 'Нужны права администратора'
+
+[[dir_path]]
+id = 'wu_download'
+like = '_:\Windows\SoftwareDistribution\Download'
+safety = 'safe'
+title = 'Загрузки Windows Update'
+hint = 'Безопасно после установки обновлений'
+
+[[dir_path]]
+id = 'recycle'
+like = '_:\$Recycle.Bin'
+safety = 'safe'
+title = 'Корзина'
+hint = 'Очистить корзину'
+
+[[dir_path]]
+id = 'pip_cache'
+like = '%\AppData\Local\pip\cache'
+safety = 'safe'
+title = 'Кэш pip'
+hint = 'pip скачает пакеты заново. Папка останется'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'npm_cache'
+like = '%\AppData\Local\npm-cache'
+safety = 'safe'
+title = 'Кэш npm'
+hint = 'npm скачает пакеты заново. Папка останется'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'nuget_cache'
+like = '%\.nuget\packages'
+safety = 'review'
+title = 'Кэш пакетов NuGet'
+hint = 'dotnet nuget locals all --clear'
+
+[[dir_path]]
+id = 'hf_cache'
+like = '%\.cache\huggingface'
+safety = 'review'
+title = 'Скачанные модели HuggingFace'
+hint = 'Модели скачаются заново при необходимости'
+
+[[dir_path]]
+id = 'torch_cache'
+like = '%\.cache\torch'
+safety = 'review'
+title = 'Кэш PyTorch'
+hint = 'Скачается заново при необходимости'
+
+[[dir_path]]
+id = 'crash_dumps'
+like = '%\AppData\Local\CrashDumps'
+safety = 'safe'
+title = 'Аварийные дампы приложений'
+hint = 'Нужны только для отладки'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'wer'
+like = '%\Microsoft\Windows\WER'
+safety = 'safe'
+title = 'Отчёты об ошибках Windows'
+hint = 'Нужны только для отладки'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'thumbcache'
+like = '%\Microsoft\Windows\Explorer'
+safety = 'safe'
+title = 'Кэш эскизов Проводника'
+hint = 'Пересоздаётся. Файлы, занятые Проводником, будут пропущены'
+action = 'clear_contents'
+
+[[dir_path]]
+id = 'installer_cache'
+like = '_:\Windows\Installer\$PatchCache$'
+safety = 'review'
+title = 'Кэш патчей установщика Windows'
+hint = 'Только через DISM/cleanmgr'
+
+[[dir_name]]
+id = 'node_modules'
+names = ['node_modules']
+safety = 'review'
+title = 'Зависимости Node.js (node_modules)'
+hint = 'Восстанавливаются через npm install; удалять в неактивных проектах'
+
+[[dir_name]]
+id = 'pycache'
+names = ['__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']
+safety = 'safe'
+title = 'Кэш Python'
+hint = 'Пересоздаётся автоматически'
+
+[[dir_name]]
+id = 'venv'
+names = ['.venv', 'venv', 'env']
+safety = 'review'
+title = 'Виртуальные окружения Python'
+hint = 'Пересоздаются из requirements.txt; удалять в заброшенных проектах'
+require_file = 'pyvenv.cfg'
+
+[[dir_name]]
+id = 'build'
+names = ['bin', 'obj']
+safety = 'review'
+title = 'Артефакты сборки .NET (bin/obj)'
+hint = 'Пересоздаются при сборке'
+sibling_ext = ['csproj', 'sln', 'fsproj']
+
+[[dir_name]]
+id = 'browser_cache'
+names = ['Cache', 'Code Cache', 'GPUCache', 'ShaderCache', 'GrShaderCache']
+safety = 'safe'
+title = 'Кэш браузеров на Chromium'
+hint = 'Папка останется. Свежие и занятые файлы будут пропущены'
+path_like = '%\AppData\%\User Data\%'
+action = 'clear_contents'
+
+[[dir_name]]
+id = 'firefox_cache'
+names = ['cache2', 'startupCache', 'shader-cache']
+safety = 'safe'
+title = 'Кэш Firefox'
+hint = 'Папка останется. Свежие и занятые файлы будут пропущены'
+path_like = '%\Mozilla\Firefox\Profiles\%'
+action = 'clear_contents'
+
+[[dir_name]]
+id = 'engine_cache'
+names = ['Code Cache', 'GPUCache', 'ShaderCache', 'GrShaderCache']
+safety = 'safe'
+title = 'Кэш движка Electron-приложений'
+hint = 'Папка останется. Свежие и занятые файлы будут пропущены'
+path_like = '%\AppData\%'
+action = 'clear_contents'
+
+[[dir_name]]
+id = 'app_cache'
+names = ['Cache', 'CacheStorage']
+safety = 'review'
+title = 'Кэши других приложений'
+hint = 'Часть данных придётся скачивать или пересоздавать заново. Проверьте программу-владельца'
+path_like = '%\AppData\%'
+action = 'clear_contents'
+
+[[file]]
+id = 'dl_installers'
+dir_like = '%\Downloads%'
+exts = ['exe', 'msi', 'msix', 'iso']
+safety = 'review'
+title = 'Установщики и образы в «Загрузках»'
+hint = 'Обычно не нужны после установки'
+
+[[file]]
+id = 'crashpad_dumps'
+dir_like = '%\Crashpad\%'
+exts = ['dmp']
+safety = 'safe'
+title = 'Отчёты о сбоях приложений (Crashpad)'
+hint = 'Нужны только для отладки'
+
+[[file]]
+id = 'dumps'
+dir_like = '%'
+exts = ['dmp', 'hdmp', 'mdmp']
+safety = 'review'
+title = 'Файлы с расширением дампа'
+hint = 'Обычно это дампы памяти, но .dmp используют и программы для своих данных'
+
+[[file]]
+id = 'partial'
+dir_like = '%'
+exts = ['crdownload', 'part', 'partial']
+safety = 'review'
+title = 'Недокачанные файлы'
+hint = 'Обрывки загрузок. Проверьте, что загрузка не идёт прямо сейчас'

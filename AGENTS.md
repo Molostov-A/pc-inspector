@@ -19,28 +19,15 @@
 
 ## 2. Текущее состояние кода
 
-Черновик этапа 1 написан, но **ни разу не запускался и не тестировался**:
-
-| Файл | Состояние |
-|---|---|
-| `pcinspector/config.py` | готов |
-| `pcinspector/core/db.py` | схема v1; нет миграций (`core/migrations.py` создать) |
-| `pcinspector/core/scanner.py` | работающий по замыслу черновик; нет jobs/отмены/исключений/снимков (F1.7–F1.11) |
-| `pcinspector/core/models.py`, `core/fmt.py` | готовы |
-| `pcinspector/analyzers/base.py` | реестр, `Param`, `root_filter`; добавить тип `choice` |
-| `pcinspector/analyzers/{overview,stale,junk,rules}.py` | черновики анализаторов `roots, tree, top_files, types, stale_files, forgotten_dirs, junk` |
-| `pcinspector/__main__.py` | ссылается на **ещё не существующий** `cli.py` |
-| `core/safety.py`, `services.py`, `cli.py`, `api/`, `web/`, `mcp_server.py`, `actions/`, `collectors/`, `tests/`, `pyproject.toml` | **нет** |
-
-Первая задача любого агента на этапе 1 — довести черновик до рабочего состояния тестами (см. ROADMAP),
-а не переписывать с нуля. Переписать можно, если черновик противоречит ТЗ; это нужно отметить в DECISIONS.md.
+Этапы 0–7 реализованы и покрыты тестами, этап 8 открыт (см. ROADMAP). Данные лежат в двух базах (`core/db.py`):
+скан пишет в индекс, планы и коллекторы — в `<индекс>.state.db`. Логика разделена по модулям пакета `services/`.
 
 ## 3. Архитектура — жёсткие правила
 
 ```
 cli.py / api/ / mcp_server.py   ← только парсинг ввода и форматирование вывода
             │
-        services.py             ← единственная точка входа в логику
+        services/               ← единственная точка входа в логику
             │
 analyzers/  collectors/  actions/  core/scanner
             │
@@ -48,7 +35,7 @@ core/ (db, models, safety, fmt, jobs), config.py
 ```
 
 1. **Зависимости только вниз.** `core` не импортирует `analyzers`, `actions`, `api` и т. д.
-2. **В интерфейсах нет SQL и бизнес-логики.** Нужно что-то новое в UI — добавьте функцию в `services.py`.
+2. **В интерфейсах нет SQL и бизнес-логики.** Нужно что-то новое в UI — добавьте функцию в `services/`.
 3. **Анализаторы только читают** (read-only соединение), не трогают ФС и ничего не пишут в БД.
 4. **ФС изменяет только `actions/executor.py`.** `os.remove`, `shutil.rmtree`, `shutil.move`, `send2trash`, `Path.unlink` где-либо ещё — запрещены.
    Исключение: сканер и коллекторы читают ФС; `config` создаёт `data/`.
@@ -82,7 +69,7 @@ core/ (db, models, safety, fmt, jobs), config.py
    Отдельный экран в UI — только если это предусмотрено ТЗ.
 
 ### 5.2. Новое правило мусора
-Только данные в `analyzers/rules.py` (`DIR_NAME_RULES`, `DIR_PATH_RULES`, `FILE_RULES`). Поля: `id`, `title`, `safety`, `hint` + условие. Для активных кэшей добавляйте `"action": "clear_contents"`. Точные пути срабатывают раньше правил по имени.
+Только данные в `analyzers/rules.toml` (`[[dir_name]]`, `[[dir_path]]`, `[[file]]`). Поля: `id`, `title`, `safety`, `hint` + условие. Для активных кэшей добавляйте `"action": "clear_contents"`. Точные пути срабатывают раньше правил по имени.
 В SQL `LIKE` подстановочный символ одной буквы — `_` (не `?`). `safe` ставить только для того,
 что гарантированно восстанавливается само (кэш, temp). Сомневаетесь — `review`. Добавить кейс в тест `junk`.
 
@@ -91,7 +78,7 @@ core/ (db, models, safety, fmt, jobs), config.py
 Обновить §6.2 в SPEC.md. Таблицы `file_hashes`, `apps`, `plans`, `actions_log` переживают пересканирование — не удаляйте их данные.
 
 ### 5.4. Новый эндпоинт API / инструмент MCP
-Сначала функция в `services.py`, затем тонкая обёртка в `api/routes/*.py` (Pydantic-схемы в `api/schemas.py`)
+Сначала функция в `services/`, затем тонкая обёртка в `api/routes/*.py` (Pydantic-схемы в `api/schemas.py`)
 и/или в `mcp_server.py`. Для MCP: описание инструмента — по-английски, кратко, с указанием ограничений.
 Мутирующий ФС инструмент в MCP добавлять нельзя (§4).
 

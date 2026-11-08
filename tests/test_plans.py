@@ -94,7 +94,7 @@ def test_cli_declines_and_accepts_yes(index: Path, fake_tree: Path, monkeypatch:
     monkeypatch.setattr(executor, "send2trash", calls.append)
     monkeypatch.setattr("builtins.input", lambda _: "no")
     assert cli.main(["plan", "create", "Проверка", "--db", str(index)]) == 0
-    assert cli.main(["plan", "add", "1", str(source), "--db", str(index)]) == 0
+    assert cli.main(["plan", "add", "1", str(source), "--action", "recycle", "--db", str(index)]) == 0
     arguments = ["plan", "execute", "1", "--db", str(index)]
     assert cli.main(arguments) == 1
     assert not calls

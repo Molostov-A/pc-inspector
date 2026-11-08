@@ -61,7 +61,7 @@ def _parser() -> argparse.ArgumentParser:
             entry.add_argument(
                 "--action",
                 choices=("recycle", "quarantine", "move", "delete_empty_dir", "clear_contents"),
-                default="recycle",
+                default="quarantine",
             )
             entry.add_argument("--target")
             entry.add_argument("--reason", default="")

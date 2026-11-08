@@ -14,6 +14,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
+from ..core import settings
 from ..core.fmt import parse_size
 from ..core.models import Report
 from ..core.paths import index_path, path_comparison, root_filter  # noqa: F401 (публичные помощники анализаторов)
@@ -26,6 +27,7 @@ class Param:
     default: Any
     help: str
     choices: tuple[str, ...] = ()
+    setting: str | None = None  # значение по умолчанию берётся из настроек пользователя
 
     def coerce(self, value: Any) -> Any:
         if value is None:
@@ -67,6 +69,10 @@ class Analyzer:
         unknown = set(raw) - known
         if unknown:
             raise ValueError(f"{self.id}: неизвестные параметры {sorted(unknown)}")
+        missing = [p for p in self.params if p.setting and raw.get(p.name) is None]
+        if missing:
+            stored = settings.load(con)
+            raw = {**raw, **{p.name: stored[p.setting] for p in missing}}
         params = {p.name: p.coerce(raw.get(p.name)) for p in self.params}
         report = self.run(con, **params)
         report.params = params

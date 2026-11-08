@@ -6,6 +6,7 @@ import os
 import sqlite3
 from typing import ClassVar
 
+from ..core import db
 from ..core.models import Finding, Report
 from ..core.scanner import CLOUD, REPARSE
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, index_path, register, root_filter
@@ -69,10 +70,7 @@ class Duplicates(Analyzer):
     def run(self, con: sqlite3.Connection, root: str, min_size: int, limit: int) -> Report:
         report = Report(self.id, self.title)
         root = os.path.abspath(index_path(root)) if root else ""
-        if (
-            con.execute("SELECT 1 FROM sqlite_schema WHERE name='file_hashes' AND type='table'").fetchone()
-            is None
-        ):
+        if db.has_table(con, "file_hashes") is None:
             report.notes.append(_START_HINT)
             return report
         report.notes.extend(_run_notes(con, root, min_size))

@@ -96,7 +96,7 @@ def _candidates(con: sqlite3.Connection, root: str, min_size: int) -> Iterator[t
             continue
         previous = path
         rule = RULES[row["rule"]]
-        meta = {"hint": rule["hint"], "action": rule.get("action", "recycle")}
+        meta = {"hint": rule["hint"], "action": rule.get("action", "quarantine")}
         if row["is_dir"]:
             prefix = path.rstrip(os.sep) + os.sep
             meta.update(files=row["files"], newest_mtime=row["mtime"])

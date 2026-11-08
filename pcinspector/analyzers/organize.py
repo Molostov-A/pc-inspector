@@ -6,12 +6,13 @@ import os
 import re
 import sqlite3
 import time
+from bisect import bisect_left
 from datetime import datetime
 from difflib import SequenceMatcher
 from typing import ClassVar
 
 from .. import config
-from ..core import settings
+from ..core import db, settings
 from ..core.fmt import DAY
 from ..core.models import Finding, Report
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, index_path, path_comparison, register, root_filter
@@ -24,6 +25,11 @@ MEDIA_FOLDERS = ("videos", "movies", "media", "video", "pictures", "видео",
 MEDIA_TYPES = sorted(CATEGORIES["Видео"] | {"iso", "img", "vhd", "vhdx", "vmdk", "wim", "dmg", "nrg", "mdf"})
 
 
+def _has_error(errors: list[str], path: str) -> bool:
+    position = bisect_left(errors, path)
+    return position < len(errors) and (errors[position] == path or errors[position].startswith(path + os.sep))
+
+
 @register
 class EmptyDirectories(Analyzer):
     id = "empty_dirs"
@@ -34,20 +40,22 @@ class EmptyDirectories(Analyzer):
     def run(self, con: sqlite3.Connection, *, root: str, limit: int) -> Report:
         report = Report(self.id, self.title)
         scope, values = root_filter("d.path", root)
+        # Папку с ошибкой чтения нельзя считать пустой: сверяем с отсортированным списком путей.
+        errors = sorted(row[0] for row in con.execute("SELECT pci_casefold(path) FROM errors"))
+        found = 0
         for row in con.execute(
             f"""
             SELECT d.path, EXISTS (SELECT 1 FROM dirs c WHERE c.parent_id=d.id) AS has_children
             FROM dirs d WHERE d.depth>0 AND d.protected=0 AND d.total_files=0 AND {scope}
-            AND NOT EXISTS (
-                SELECT 1 FROM errors e WHERE e.root_id=d.root_id AND (
-                    pci_casefold(e.path)=pci_casefold(d.path)
-                    OR instr(pci_casefold(e.path),pci_casefold(d.path || ?))=1
-                )
-            )
-            ORDER BY d.depth DESC, d.path LIMIT ?
+            ORDER BY d.depth DESC, d.path
             """,
-            (*values, os.sep, limit),
+            values,
         ):
+            if found == limit:
+                break
+            if _has_error(errors, row["path"].casefold()):
+                continue
+            found += 1
             report.findings.append(
                 Finding(
                     "dir",
@@ -55,7 +63,7 @@ class EmptyDirectories(Analyzer):
                     path=row["path"],
                     safety="safe",
                     reason="В поддереве нет файлов по данным индекса",
-                    meta={"action": "recycle" if row["has_children"] else "delete_empty_dir"},
+                    meta={"action": "quarantine" if row["has_children"] else "delete_empty_dir"},
                 )
             )
         return report
@@ -123,7 +131,7 @@ class InstalledInstallers(Analyzer):
     def run(self, con: sqlite3.Connection, *, path: str, limit: int) -> Report:
         report = Report(self.id, self.title)
         versions: dict[tuple[int, ...], list[tuple[str, str, str]]] = {}
-        if con.execute("SELECT 1 FROM sqlite_schema WHERE name='apps'").fetchone():
+        if db.has_table(con, "apps"):
             for app in con.execute("SELECT name,version FROM apps WHERE version IS NOT NULL"):
                 version = _version(app["version"])
                 name = _product_name(app["name"])

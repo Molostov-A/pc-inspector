@@ -140,7 +140,7 @@ def _scan_work(job: _Job, paths: tuple[str, ...], db_path: Path | str) -> None:
         with _lock:
             job.status = replace(job.status, progress=progress)
 
-    with closing(db.connect(db_path)) as con:
+    with closing(db.connect_index(db_path)) as con:
         for path in paths:
             if job.cancel.is_set():
                 raise CancelledError()

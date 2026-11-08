@@ -17,7 +17,7 @@ dev = ["pytest", "ruff", "httpx"]
 include = ["pcinspector*"]
 
 [tool.setuptools.package-data]
-pcinspector = ["web/index.html", "web/css/*", "web/js/*.js", "web/js/components/*.js", "web/js/pages/*.js", "web/vendor/*"]
+pcinspector = ["analyzers/rules.toml", "web/index.html", "web/css/*", "web/js/*.js", "web/js/components/*.js", "web/js/pages/*.js", "web/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

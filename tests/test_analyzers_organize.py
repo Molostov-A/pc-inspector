@@ -107,7 +107,7 @@ def test_organize_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         return services.run_analyzer(name, db_path=index, **params).findings
 
     empties = {item.path: item for item in analyze("empty_dirs")}
-    assert empties[str(empty)].meta["action"] == "recycle"
+    assert empties[str(empty)].meta["action"] == "quarantine"
     assert empties[str(empty / "child")].meta["action"] == "delete_empty_dir"
     assert str(root / "unreadable") not in empties
     assert str(downloads) not in empties

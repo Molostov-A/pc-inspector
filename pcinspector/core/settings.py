@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from .. import config
-from . import safety
+from . import db, safety
 
 DAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 
@@ -36,7 +36,7 @@ def load(con: sqlite3.Connection) -> Settings:
         schedule_time="03:00",
         quarantine_path="",
     )
-    if con.execute("SELECT 1 FROM sqlite_schema WHERE name='settings'").fetchone():
+    if db.has_table(con, "settings"):
         for key, value in con.execute(
             "SELECT key,value FROM settings WHERE key IN (?,?,?,?,?,?,?,?)",
             tuple(result),

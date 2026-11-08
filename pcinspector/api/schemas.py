@@ -64,7 +64,7 @@ class PlanEdit(BaseModel):
 
 class PlanItemInput(BaseModel):
     path: str = Field(min_length=1, max_length=32767)
-    action: Action = "recycle"
+    action: Action = "quarantine"
     reason: str = Field(default="", max_length=1000)
     target: str | None = Field(default=None, max_length=32767)
     safety: str = "review"

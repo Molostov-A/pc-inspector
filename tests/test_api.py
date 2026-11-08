@@ -154,7 +154,7 @@ def test_open_requires_indexed_path_and_token(
 ) -> None:
     launches: list[list[str]] = []
     monkeypatch.setattr(safety, "local_path_without_links", lambda path: path)
-    monkeypatch.setattr(services, "subprocess", SimpleNamespace(Popen=launches.append))
+    monkeypatch.setattr(services.system, "subprocess", SimpleNamespace(Popen=launches.append))
     directory = fake_tree / "Документы"
     file = directory / "отчёт.txt"
     with TestClient(create_app(db_path=index), base_url=ORIGIN) as client:

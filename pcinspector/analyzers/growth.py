@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import ClassVar
 
+from ..core import db
 from ..core.models import Finding, Report
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, register, root_filter
 
@@ -23,7 +24,7 @@ class Growth(Analyzer):
 
     def run(self, con: sqlite3.Connection, *, root: str, limit: int, min_delta: int, since: str) -> Report:
         report = Report(self.id, self.title)
-        if not con.execute("SELECT 1 FROM sqlite_schema WHERE name='snapshots'").fetchone():
+        if not db.has_table(con, "snapshots"):
             report.notes.append("Нет двух снимков одного корня. Просканируйте его повторно.")
             return report
         scope, values = root_filter("path", root)

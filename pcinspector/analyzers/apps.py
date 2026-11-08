@@ -10,6 +10,7 @@ import time
 from difflib import SequenceMatcher
 from typing import Any, ClassVar
 
+from ..core import db
 from ..core.fmt import DAY
 from ..core.models import Finding, Report
 from .base import P_LIMIT, P_ROOT, Analyzer, Param, register, root_filter
@@ -21,7 +22,7 @@ _SUFFIXES = {"inc", "llc", "ltd", "corp", "corporation", "gmbh", "limited"}
 
 
 def _collection(con: sqlite3.Connection) -> dict[str, Any] | None:
-    if con.execute("SELECT 1 FROM sqlite_schema WHERE name='apps'").fetchone() is None:
+    if not db.has_table(con, "apps"):
         return None
     row = con.execute("SELECT value FROM settings WHERE key=?", ("apps_collection",)).fetchone()
     return json.loads(row["value"]) if row else None

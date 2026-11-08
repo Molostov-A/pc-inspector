@@ -104,7 +104,11 @@ def test_recycle_failure_does_not_stop_later_items(
         original(path)
 
     monkeypatch.setattr(executor, "send2trash", recycle)
-    plan = _plan(index, services.PlanItemIn(str(source)), services.PlanItemIn(str(empty), "delete_empty_dir"))
+    plan = _plan(
+        index,
+        services.PlanItemIn(str(source), "recycle"),
+        services.PlanItemIn(str(empty), "delete_empty_dir"),
+    )
     result = _execute(index, plan)
     assert result["done"] == 1 and result["failed"] == 1
     assert source.exists() and not empty.exists()

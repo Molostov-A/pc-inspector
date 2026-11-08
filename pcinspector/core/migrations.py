@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+STATE_TABLES = (
+    "settings",
+    "plans",
+    "plan_items",
+    "actions_log",
+    "file_hashes",
+    "hash_runs",
+    "apps",
+    "app_usage",
+)
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS roots (
@@ -213,10 +225,49 @@ def migrate(con: sqlite3.Connection) -> None:
         if version > SCHEMA_VERSION:
             raise ValueError(f"Версия индекса {version} новее поддерживаемой ({SCHEMA_VERSION})")
         for next_version, schema in enumerate(
-            (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6), start=1
+            (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, ""), start=1
         ):
             if version < next_version:
                 for statement in schema.split(";"):
                     if statement.strip():
                         con.execute(statement)
                 con.execute(f"PRAGMA user_version={next_version}")
+
+
+def _state_objects(con: sqlite3.Connection) -> list[sqlite3.Row]:
+    marks = ",".join("?" * len(STATE_TABLES))
+    return con.execute(
+        f"SELECT type, name, tbl_name, sql FROM main.sqlite_schema "
+        f"WHERE tbl_name IN ({marks}) AND sql IS NOT NULL ORDER BY type DESC",
+        STATE_TABLES,
+    ).fetchall()
+
+
+def is_current(con: sqlite3.Connection) -> bool:
+    """Проверить, что схема актуальна и состояние уже вынесено из индекса."""
+    return con.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION and not _state_objects(con)
+
+
+def split_state(con: sqlite3.Connection, state: Path) -> None:
+    """Перенести таблицы состояния в отдельную базу. Повторный запуск безопасен."""
+    objects = _state_objects(con)
+    con.execute("ATTACH DATABASE ? AS state", (str(state),))
+    try:
+        con.execute("PRAGMA state.journal_mode=WAL")
+        con.execute("PRAGMA foreign_keys=OFF")
+        tables = sorted({row[2] for row in objects})
+        con.execute("BEGIN IMMEDIATE")
+        with con:
+            for row in objects:
+                # SQLite хранит текст CREATE уже без IF NOT EXISTS и без имени схемы.
+                statement = re.sub(
+                    r"^CREATE (TABLE|UNIQUE INDEX|INDEX) ", r"CREATE \1 IF NOT EXISTS state.", row[3], count=1
+                )
+                con.execute(statement)
+            for table in tables:
+                con.execute(f"INSERT OR REPLACE INTO state.{table} SELECT * FROM main.{table}")
+            for table in tables:
+                con.execute(f"DROP TABLE main.{table}")
+        con.execute("PRAGMA state.user_version=1")
+    finally:
+        con.execute("DETACH DATABASE state")

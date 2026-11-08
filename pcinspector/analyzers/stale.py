@@ -16,7 +16,7 @@ from ..core.models import Finding, Report
 from .base import P_LIMIT, P_MIN_SIZE, P_ROOT, Analyzer, Param, register, root_filter
 from .rules import category
 
-P_DAYS = Param("days", "int", 365, "Сколько дней без изменений считать «давно»")
+P_DAYS = Param("days", "int", 365, "Сколько дней без изменений считать «давно»", setting="stale_days")
 NOTE_ATIME = "Дата доступа на Windows ненадёжна; использовалась max(дата изменения, дата доступа)."
 
 

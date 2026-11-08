@@ -61,7 +61,7 @@ export async function render(container, _params, signal) {
   container.replaceChildren(
     heading("Оценка места", "Мусор", "Кэши, временные данные и другие находки, которые стоит проверить."),
     el("div", "metrics",
-      el("section", "panel metric", el("p", "eyebrow", "Можно освободить"), sized(report.summary.safe_size)),
+      el("section", "panel metric", el("p", "eyebrow", "Безопасно убрать"), sized(report.summary.safe_size)),
       el("section", "panel metric review", el("p", "eyebrow", "Нужна проверка"), sized(report.summary.review_size)),
       el("section", "panel metric neutral", el("p", "eyebrow", "Найдено путей"), el("strong", "", number(report.summary.items))),
     ),

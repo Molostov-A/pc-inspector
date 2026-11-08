@@ -72,7 +72,7 @@ export async function render(container, _params, signal) {
     ),
     cards,
     el("div", "metrics",
-      el("section", "panel metric", el("p", "eyebrow", "Можно освободить"), sized(junk.summary.safe_size), el("p", "muted", "Кэши и временные данные")),
+      el("section", "panel metric", el("p", "eyebrow", "Безопасно убрать"), sized(junk.summary.safe_size), el("p", "muted", "Кэши и временные данные")),
       el("section", "panel metric review", el("p", "eyebrow", "Нужна проверка"), sized(junk.summary.review_size), el("p", "muted", "Файлы и папки для ручной оценки")),
       el("section", "panel metric neutral", el("p", "eyebrow", "Рост с прошлого скана"), el("strong", "", "—"),
         link("Открыть историю роста", "/organize", { tab: "growth" }, "text-link")),

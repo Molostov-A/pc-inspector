@@ -42,10 +42,10 @@ LAYOUTS = [
         "AppData/Local/D/Crashpad/reports/a.dmp",
         "crashpad_dumps",
         "safe",
-        "recycle",
+        "quarantine",
     ),
-    ("AppData/Local/R/Core.dmp", "AppData/Local/R/Core.dmp", "dumps", "review", "recycle"),
-    ("Work/film.part", "Work/film.part", "partial", "review", "recycle"),
+    ("AppData/Local/R/Core.dmp", "AppData/Local/R/Core.dmp", "dumps", "review", "quarantine"),
+    ("Work/film.part", "Work/film.part", "partial", "review", "quarantine"),
 ]
 
 

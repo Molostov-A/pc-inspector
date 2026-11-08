@@ -107,6 +107,8 @@ export async function render(container, params, signal) {
           el("h2", "", "Итог выполнения"),
           el("p", "", `Выполнено ${outcome.done} · Пропущено ${outcome.skipped} · Ошибок ${outcome.failed}`),
           el("p", "", "Обработано ", sized(outcome.processed_size), " · Освобождено ", sized(outcome.freed_size)),
+          el("p", "muted", "Место освободится после очистки карантина и Корзины."),
+          outcome.index_updated === false ? message("Индекс занят сканом. Данные обновятся после пересканирования.", "note") : null,
           link("Открыть историю →", "/history", {}, "text-link"),
         );
         report.hidden = false;

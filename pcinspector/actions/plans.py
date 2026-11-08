@@ -24,7 +24,7 @@ MAX_ITEMS = 500
 @dataclass(frozen=True)
 class PlanItemIn:
     path: str
-    action: Action = "recycle"
+    action: Action = "quarantine"
     reason: str = ""
     target: str | None = None
     safety: str = "review"

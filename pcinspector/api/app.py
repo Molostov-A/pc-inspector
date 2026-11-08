@@ -93,6 +93,8 @@ def create_app(*, port: int = DEFAULT_PORT, db_path: Path | str | None = None) -
     @app.exception_handler(sqlite3.Error)
     @app.exception_handler(OSError)
     async def index_error(_request: Request, error: sqlite3.Error | OSError) -> JSONResponse:
+        if isinstance(error, sqlite3.OperationalError) and error.sqlite_errorcode & 0xFF in (5, 6):
+            return _error(503, "busy", "База занята другой операцией. Повторите через несколько секунд")
         logger.error("Ошибка чтения данных: %s", error)
         return _error(500, "data_error", "Не удалось прочитать индекс или данные о томах")
 

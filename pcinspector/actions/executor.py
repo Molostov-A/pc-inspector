@@ -244,6 +244,7 @@ def execute_plan(con: sqlite3.Connection, plan_id: int, token: str) -> dict[str,
         "skipped": sum(item["status"] == "skipped" for item in failures),
         "failed": sum(item["status"] == "failed" for item in failures),
         "issues": failures,
+        "changed_paths": [path for item in done for path in (item["path"], item["target"]) if path],
     }
 
 
@@ -268,11 +269,12 @@ def _restore_contents(con: sqlite3.Connection, record: sqlite3.Row) -> dict[str,
         return {
             "restored": False,
             "message": f"Не возвращено объектов: {occupied}. Такие имена уже заняты, они остались в карантине",
+            "changed_paths": [str(source)],
         }
     now = time.time()
     con.execute("UPDATE actions_log SET restored_at=? WHERE id=?", (now, record["id"]))
     logger.info("Откат очистки %s: %s", record["id"], source)
-    return {"restored": True, "path": str(source), "restored_at": now}
+    return {"restored": True, "path": str(source), "restored_at": now, "changed_paths": [str(source)]}
 
 
 def restore_action(con: sqlite3.Connection, action_id: int) -> dict[str, Any]:
@@ -301,7 +303,12 @@ def restore_action(con: sqlite3.Connection, action_id: int) -> dict[str, Any]:
         now = time.time()
         con.execute("UPDATE actions_log SET restored_at=? WHERE id=?", (now, action_id))
         logger.info("Откат %s: %s", action_id, source)
-        return {"restored": True, "path": str(source), "restored_at": now}
+        return {
+            "restored": True,
+            "path": str(source),
+            "restored_at": now,
+            "changed_paths": [str(source), str(moved)],
+        }
 
 
 def purge_quarantine(con: sqlite3.Connection, older_than_days: int, *, confirmed: bool) -> dict[str, Any]:
