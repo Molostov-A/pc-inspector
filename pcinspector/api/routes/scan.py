@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ... import services
-from ..schemas import ScanCancelled, ScanRequest, ScanStarted
+from ..schemas import HashRequest, ScanCancelled, ScanRequest, ScanStarted
 
 router = APIRouter(prefix="/api")
 
@@ -16,6 +16,13 @@ router = APIRouter(prefix="/api")
 @router.post("/scan", status_code=202)
 def scan(body: ScanRequest, request: Request) -> ScanStarted:
     return ScanStarted(job_id=services.start_scan(body.paths, db_path=request.app.state.db_path))
+
+
+@router.post("/hash", status_code=202)
+def start_hash(body: HashRequest, request: Request) -> ScanStarted:
+    return ScanStarted(
+        job_id=services.start_hash(body.root, body.min_size, db_path=request.app.state.db_path)
+    )
 
 
 @router.get("/jobs/{job_id}")

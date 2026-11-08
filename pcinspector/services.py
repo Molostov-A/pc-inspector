@@ -8,11 +8,12 @@ import re
 import sqlite3
 import subprocess
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import closing
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from typing import Any, Literal, NotRequired, TypedDict
 
 from . import config
@@ -21,8 +22,9 @@ from .actions.plans import Action, Author, PlanItemIn
 from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
 from .analyzers.overview import directory_finding, find_directory
+from .collectors import hashing
 from .core import db, jobs, safety, scanner
-from .core.fmt import DAY, human_size
+from .core.fmt import DAY, human_size, parse_size
 from .core.models import Finding, Report
 
 
@@ -42,6 +44,25 @@ def start_scan(paths: list[str], *, db_path: Path | str | None = None) -> str:
 
 def job_status(job_id: str) -> jobs.JobStatus:
     return jobs.job_status(job_id)
+
+
+def start_hash(
+    root: str = "",
+    min_size: str | int = hashing.DEFAULT_MIN_SIZE,
+    *,
+    db_path: Path | str | None = None,
+) -> str:
+    minimum = parse_size(min_size)
+    if not 0 <= minimum <= 2**63 - 1:
+        raise ValueError("Укажите допустимый неотрицательный минимальный размер")
+    scope = scanner.normalize_root(root) if root else ""
+    path = _db_path(db_path)
+
+    def work(notify: Callable[[jobs.HashProgress], None], cancel: Event) -> jobs.HashResult:
+        with closing(db.connect(path)) as con:
+            return hashing.collect(con, scope, minimum, notify, cancel)
+
+    return jobs.start_hash(work)
 
 
 def cancel_job(job_id: str) -> bool:
@@ -86,10 +107,11 @@ def add_plan_items(
     plan_id: int,
     items: list[PlanItemIn],
     *,
+    keep_path: str | None = None,
     db_path: Path | str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     with closing(db.connect(_db_path(db_path))) as con:
-        return plans.add_items(con, plan_id, items)
+        return plans.add_items(con, plan_id, items, keep_path=keep_path)
 
 
 def edit_plan_item(
@@ -188,7 +210,8 @@ def _read_index(db_path: Path | str | None) -> sqlite3.Connection:
 
 def run_analyzer(analyzer_id: str, *, db_path: Path | str | None = None, **params: Any) -> Report:
     analyzer = get(analyzer_id)
-    with closing(_read_index(db_path)) as con:
+    with closing(_read_index(db_path)) as con, con:
+        con.execute("BEGIN")
         return analyzer(con, **params)
 
 
@@ -476,14 +499,18 @@ def ai_brief(max_items: int = 15, *, db_path: Path | str | None = None) -> str:
         )
         if not forgotten.findings:
             lines.append("Подходящих папок нет.")
-        lines.extend(
-            [
-                "",
-                "## Дополнительные данные",
-                "",
-                "Сведения о дубликатах, использовании программ и росте появятся после соответствующих этапов.",
-            ]
-        )
+        lines.extend(["", "## Дополнительные данные", ""])
+        duplicates = get("duplicates")(con, limit=min(5, max_items))
+        if duplicates.findings:
+            lines.append("### Дубликаты")
+            lines.extend(
+                f"- {_markdown_cell(item.title)} — {human_size(item.size)} потенциально, {item.meta['count']} копий."
+                for item in duplicates.findings
+            )
+        elif not duplicates.notes:
+            lines.append("Групп дубликатов в выбранном размере не найдено.")
+        lines.extend(duplicates.notes)
+        lines.append("Сведения об использовании программ и росте появятся после соответствующих этапов.")
 
     text = "\n".join(lines) + "\n"
     if len(text) > 12_000:

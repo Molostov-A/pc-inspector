@@ -19,6 +19,11 @@ class ScanStarted(BaseModel):
     job_id: str
 
 
+class HashRequest(BaseModel):
+    root: str = Field(default="", max_length=32767)
+    min_size: str | int = "1M"
+
+
 class ScanCancelled(BaseModel):
     cancelled: bool
 
@@ -49,6 +54,7 @@ class PlanItemInput(BaseModel):
 
 class AddPlanItems(BaseModel):
     items: list[PlanItemInput] = Field(min_length=1, max_length=500)
+    keep_path: str | None = Field(default=None, min_length=1, max_length=32767)
 
 
 class PlanItemEdit(BaseModel):

@@ -10,13 +10,13 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 from ..core.fmt import parse_size
 from ..core.models import Report
+from ..core.paths import index_path, path_comparison, root_filter  # noqa: F401 (публичные помощники анализаторов)
 
 
 @dataclass(frozen=True)
@@ -94,27 +94,3 @@ def get(analyzer_id: str) -> Analyzer:
 P_LIMIT = Param("limit", "int", 30, "Сколько строк показать")
 P_ROOT = Param("root", "str", "", "Ограничить путём (префикс), например C:\\Users")
 P_MIN_SIZE = Param("min_size", "size", "100M", "Минимальный размер: 500K, 100M, 2G")
-
-
-def index_path(path: str) -> str:
-    if os.name == "nt" and len(path) == 2 and path[1] == ":":
-        path += "\\"
-    return os.path.normpath(path)
-
-
-def path_comparison(column: str, path: str) -> tuple[str, str]:
-    if path.isascii():
-        return column, path
-    return f"pci_casefold({column})", path.casefold()
-
-
-def root_filter(column: str, root: str) -> tuple[str, list[Any]]:
-    """SQL-условие «путь внутри root» (без учёта регистра). Пустой root — без фильтра."""
-    if not root:
-        return "1=1", []
-    column, root = path_comparison(column, index_path(root))
-    prefix = root if root.endswith(os.sep) else root + os.sep
-    return (
-        f"({column} = ? COLLATE NOCASE OR {column} LIKE ? ESCAPE '|')",
-        [root, prefix.replace("|", "||").replace("%", "|%").replace("_", "|_") + "%"],
-    )

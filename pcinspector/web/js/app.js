@@ -6,8 +6,9 @@ import { render as junk } from "./pages/junk.js";
 import { render as analyzers } from "./pages/analyzers.js";
 import { render as plans } from "./pages/plans.js";
 import { render as history } from "./pages/history.js";
+import { render as duplicates } from "./pages/duplicates.js";
 
-const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history };
+const routes = { "/": home, "/explorer": explorer, "/junk": junk, "/analyzers": analyzers, "/plans": plans, "/history": history, "/duplicates": duplicates };
 const activities = {
   "/": "Читаем индекс и сводку по дискам…",
   "/explorer": "Читаем содержимое папки и строим карту…",
@@ -15,6 +16,7 @@ const activities = {
   "/analyzers": "Загружаем список анализаторов и параметры…",
   "/plans": "Читаем планы уборки…",
   "/history": "Читаем журнал и карантин…",
+  "/duplicates": "Читаем готовые группы дубликатов…",
 };
 const page = document.querySelector("#page");
 const theme = document.querySelector("#theme");
@@ -61,4 +63,7 @@ async function navigate() {
 
 window.addEventListener("hashchange", navigate);
 window.addEventListener("pci-scan-finished", navigate);
+window.addEventListener("pci-hash-finished", () => {
+  if (location.hash.split("?")[0] === "#/duplicates") navigate();
+});
 navigate();

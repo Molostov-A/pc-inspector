@@ -190,6 +190,8 @@ def add_items(
     con: sqlite3.Connection,
     plan_id: int,
     items: list[PlanItemIn],
+    *,
+    keep_path: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     if len(items) > MAX_ITEMS:
         raise ValueError(f"За раз можно передать до {MAX_ITEMS} пунктов")
@@ -199,6 +201,20 @@ def add_items(
         con.execute("BEGIN IMMEDIATE")
         require_plan(con, plan_id, draft=True)
         existing = list(con.execute("SELECT * FROM plan_items WHERE plan_id = ?", (plan_id,)))
+        if keep_path is not None:
+            keep_path = str(safety.checked_action_path(keep_path))
+            kind, _ = _indexed(con, keep_path)
+            if kind != "file":
+                raise ValueError("Сохраняемая копия должна быть файлом")
+            if any(
+                safety.paths_overlap(keep_path, path)
+                for row in existing
+                for path in (row["path"], row["target"])
+                if path
+            ):
+                raise ValueError(
+                    "Сохраняемая копия уже затронута этим планом. Выберите другой план или копию"
+                )
         for item in items:
             try:
                 if len(existing) >= MAX_ITEMS:
@@ -208,6 +224,11 @@ def add_items(
                 if indexed["protected"] or indexed["mtime"] is None:
                     raise ValueError("Защищённый путь или неполные данные в индексе")
                 target = validate_operation(path, kind, item.action, item.target)
+                if keep_path is not None and (
+                    safety.paths_overlap(keep_path, str(path))
+                    or (target is not None and safety.paths_overlap(keep_path, target))
+                ):
+                    raise ValueError("Пункт затрагивает копию, выбранную для сохранения")
                 _check_overlap(str(path), target, existing)
                 indexed_path = indexed["path"] if kind == "dir" else str(path)
                 entries = (

@@ -32,7 +32,7 @@ export function modal(title, content, label, submit) {
   dialog.showModal();
 }
 
-export async function addToPlan(items, feedback) {
+export async function addToPlan(items, feedback, keepPath = null) {
   try {
     const plans = await api("plans", {}, { activity: "Читаем список планов…" });
     const select = el("select");
@@ -67,7 +67,7 @@ export async function addToPlan(items, feedback) {
       }
       const id = select.value;
       const result = await api(`plans/${id}/items`, {}, {
-        method: "POST", body: { items }, activity: "Проверяем пути и добавляем пункты…",
+        method: "POST", body: { items, keep_path: keepPath }, activity: "Проверяем пути и добавляем пункты…",
       });
       feedback.replaceChildren(
         message(`Добавлено · ${number(result.accepted.length)}`, "note"),

@@ -37,6 +37,7 @@ def add_items(plan_id: int, body: AddPlanItems, request: Request) -> dict[str, A
     return services.add_plan_items(
         plan_id,
         [services.PlanItemIn(**item.model_dump()) for item in body.items],
+        keep_path=body.keep_path,
         db_path=request.app.state.db_path,
     )
 

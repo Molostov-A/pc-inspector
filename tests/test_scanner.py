@@ -132,8 +132,10 @@ def test_cancel_preserves_previous_data_and_indexes(index: Path, fake_tree: Path
         assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 6
         assert "ix_dirs_parent" in {row["name"] for row in con.execute("PRAGMA index_list(dirs)")}
         with con:
-            con.execute("CREATE TABLE file_hashes (path TEXT)")
-            con.execute("INSERT INTO file_hashes VALUES ('existing')")
+            con.execute(
+                "INSERT INTO file_hashes(path,directory,name,size,mtime,ctime,identity,partial_hash) "
+                "VALUES ('existing','folder','file',1,0,0,'test','partial')"
+            )
         assert scanner.scan(str(fake_tree).upper(), con)["files"] == 7
         assert con.execute("SELECT count(*) FROM roots").fetchone()[0] == 1
         assert con.execute("SELECT path FROM file_hashes").fetchone()[0] == "existing"

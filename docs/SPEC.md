@@ -294,6 +294,11 @@ Report:
 mtime, контрольная сумма метаданных поддерева и результат выполнения. `actions_log` фиксирует
 намерение до файловой операции, затем её результат и дату отката или очистки карантина.
 
+Версия 4 добавляет `file_hashes` и `hash_runs`. Кэш хранит нативный `path`, папку и имя для
+сопоставления с индексом, `size`, `mtime`, `ctime`, идентификатор физического файла,
+`partial_hash` и `full_hash`. Последний может отсутствовать. `hash_runs` хранит время начала
+проверки и число ошибок для каждого сочетания корня и минимального размера.
+
 **Запланированные поля и таблицы** (версии миграций присваиваются в порядке этапов):
 
 ```sql
@@ -306,14 +311,6 @@ CREATE TABLE snapshots (
 );
 CREATE TABLE snapshot_dirs (                          -- только папки глубины ≤ 4 и размером ≥ 50 МБ
   snapshot_id INTEGER, path TEXT, total_size INTEGER, total_files INTEGER
-);
-
--- Хэши (этап 5)
-CREATE TABLE file_hashes (
-  path TEXT PRIMARY KEY COLLATE NOCASE,               -- путь, а не file_id: id меняются при пересканировании
-  size INTEGER, mtime REAL,                            -- если изменились — хэш недействителен
-  partial_hash TEXT,                                   -- blake2b(первые 64 КБ + последние 64 КБ)
-  full_hash TEXT
 );
 
 -- Программы (этап 6)

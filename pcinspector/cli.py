@@ -31,6 +31,10 @@ def _parser() -> argparse.ArgumentParser:
     scan = commands.add_parser("scan", help="Просканировать указанные папки или локальные диски NTFS")
     scan.add_argument("paths", nargs="*", metavar="PATH")
     _global_options(scan)
+    hashes = commands.add_parser("hash", help="Вычислить хэши для поиска дубликатов")
+    hashes.add_argument("--root", default="", help="Ограничить поиск папкой")
+    hashes.add_argument("--min-size", default="1M", help="Минимальный размер файла")
+    _global_options(hashes)
     server = commands.add_parser("serve", help="Запустить локальный веб-интерфейс")
     server.add_argument("--port", type=int, default=8765, help="Порт локального сервера")
     server.add_argument("--open", action="store_true", help="Открыть приложение в браузере")
@@ -132,18 +136,31 @@ def _report(report: Report, as_json: bool) -> None:
 
 
 def _scan(paths: list[str], db_path: str | None, as_json: bool) -> int:
-    job_id = services.start_scan(paths, db_path=db_path)
+    return _wait_job(services.start_scan(paths, db_path=db_path), as_json)
+
+
+def _wait_job(job_id: str, as_json: bool) -> int:
     previous = None
     try:
         while (status := services.job_status(job_id)).state in ("queued", "running"):
-            progress = status.progress
+            progress = status.hash_progress or status.progress
             if progress is not None and progress != previous:
                 width = max(20, shutil.get_terminal_size().columns - 1)
-                stats = (
-                    f"{progress.files:,} файлов, {progress.dirs:,} папок, {progress.errors:,} ошибок, "
-                    f"{progress.files_per_second:,.0f} файлов/с"
-                )
-                line = _shorten(f"{stats} | {progress.path}", width)
+                if status.hash_progress is not None:
+                    info = status.hash_progress
+                    step = {
+                        "candidates": "Отбираем кандидатов",
+                        "partial": "Частичные хэши",
+                        "full": "Полные хэши",
+                    }
+                    line = f"{step[info.phase]} · {info.processed:,}/{info.total:,} · из кэша {info.cached:,}"
+                else:
+                    info = status.progress
+                    line = (
+                        f"{info.files:,} файлов, {info.dirs:,} папок, {info.errors:,} ошибок, "
+                        f"{info.files_per_second:,.0f} файлов/с | {info.path}"
+                    )
+                line = _shorten(line, width)
                 print(f"\r{line:<{width}}", end="", file=sys.stderr, flush=True)
                 previous = progress
             time.sleep(0.1)
@@ -157,6 +174,13 @@ def _scan(paths: list[str], db_path: str | None, as_json: bool) -> int:
 
     if as_json:
         _json(asdict(status))
+    elif status.hash_result is not None:
+        result = status.hash_result
+        print(
+            f"Кандидатов {result['candidates']:,} · частичных чтений {result['partial_read']:,} · "
+            f"полных чтений {result['full_read']:,} · попаданий в кэш {result['cached']:,} · "
+            f"жёстких ссылок {result['hardlinks']:,} · ошибок {result['errors']:,}"
+        )
     else:
         for result in status.results:
             print(
@@ -166,7 +190,10 @@ def _scan(paths: list[str], db_path: str | None, as_json: bool) -> int:
     for error in status.errors:
         print(error, file=sys.stderr)
     if status.state == "cancelled":
-        print("Сканирование отменено.", file=sys.stderr)
+        print(
+            "Поиск дубликатов отменён." if status.kind == "hash" else "Сканирование отменено.",
+            file=sys.stderr,
+        )
         return 130
     return 0 if status.state == "completed" else 1
 
@@ -268,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if command == "scan":
             return _scan(args["paths"], db_path, as_json)
+        if command == "hash":
+            return _wait_job(services.start_hash(args["root"], args["min_size"], db_path=db_path), as_json)
         if command == "plan":
             return _plan_command(args, db_path, as_json)
         if command == "quarantine":

@@ -64,7 +64,9 @@ export async function render(container, _params, signal) {
   ));
   container.replaceChildren(
     heading("Индекс дисков", "Дисковое пространство", "Что занимает место и какие данные стоит проверить.",
-      button(indexed.length ? "Пересканировать" : "Сканировать", "primary", () => scanDialog(indexed.map(item => item.path))),
+      el("div", "row-actions",
+        link("Найти дубликаты", "/duplicates", {}, "text-link"),
+        button(indexed.length ? "Пересканировать" : "Сканировать", "primary", () => scanDialog(indexed.map(item => item.path)))),
     ),
     cards,
     el("div", "metrics",
