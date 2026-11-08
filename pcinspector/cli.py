@@ -35,6 +35,10 @@ def _parser() -> argparse.ArgumentParser:
     server.add_argument("--port", type=int, default=8765, help="Порт локального сервера")
     server.add_argument("--open", action="store_true", help="Открыть приложение в браузере")
     _global_options(server)
+    brief = commands.add_parser("brief", help="Вывести Markdown-сводку по индексу")
+    _global_options(brief)
+    mcp = commands.add_parser("mcp", help="Запустить локальный MCP-сервер через stdio")
+    _global_options(mcp)
     listing = commands.add_parser("analyzers", help="Показать список анализаторов")
     _global_options(listing)
     sql = commands.add_parser("sql", help="Выполнить SQL-запрос только для чтения")
@@ -150,6 +154,18 @@ def main(argv: list[str] | None = None) -> int:
             from .api.app import serve
 
             serve(args["port"], args["open"], db_path)
+            return 0
+        if command == "brief":
+            summary = services.ai_brief(db_path=db_path)
+            if as_json:
+                _json({"markdown": summary})
+            else:
+                print(summary, end="")
+            return 0
+        if command == "mcp":
+            from .mcp_server import create_server
+
+            create_server(db_path=db_path).run(transport="stdio")
             return 0
         if command == "analyzers":
             analyzers = services.list_analyzers()

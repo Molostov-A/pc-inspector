@@ -75,7 +75,7 @@ def test_sql_readonly(index: Path) -> None:
         services.sql_readonly("DELETE FROM files", db_path=index)
     with pytest.raises(ValueError, match="Разрешены"):
         services.sql_readonly("ATTACH DATABASE 'another.db' AS another", db_path=index)
-    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
         services.sql_readonly("WITH x AS (SELECT 1) DELETE FROM files", db_path=index)
     with pytest.raises(sqlite3.ProgrammingError):
         services.sql_readonly("SELECT 1; DELETE FROM files", db_path=index)

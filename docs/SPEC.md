@@ -87,7 +87,7 @@
 | Индекс | SQLite (stdlib `sqlite3`), режим WAL | Без сервера, удобно и для SQL-запросов ИИ |
 | Веб-API | FastAPI + Uvicorn | Автодокументация OpenAPI, типизация через Pydantic |
 | Веб-UI | Статические HTML + ванильный JS (ES-модули) + **Apache ECharts** (локальная копия в `web/vendor/`) | **Без сборки и без npm**: проще поддерживать и LLM, и человеку |
-| MCP | Официальный Python SDK `mcp` (FastMCP), транспорт stdio | Стандарт для Claude Desktop/Code и других клиентов |
+| MCP | Официальный Python SDK `mcp` 2.x (`MCPServer`), транспорт stdio | Стандарт для Claude Desktop/Code и других клиентов |
 | Удаление в корзину | `send2trash` | Корректная работа с корзиной Windows |
 | Хэши | `hashlib.blake2b` (stdlib); `xxhash` — опционально для ускорения | |
 | Реестр | stdlib `winreg` | |

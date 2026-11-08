@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Локальный анализ дискового пространства Windows"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["fastapi", "uvicorn", "mcp", "send2trash"]
+dependencies = ["fastapi", "uvicorn", "mcp>=2,<3", "send2trash"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "httpx"]

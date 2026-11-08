@@ -33,6 +33,42 @@
 В группе мусора показаны до 10 крупнейших путей. Для просмотра списка без группировки
 откройте отчёт о мусоре в разделе **Анализаторы** и отключите группировку.
 
+## Сводка и MCP
+
+Команда для Markdown-сводки по текущему индексу
+
+```powershell
+.\.venv\Scripts\python.exe -m pcinspector brief
+```
+
+При обновлении старой установки выполните `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"`.
+Сервер MCP работает через stdio. Для отдельной базы передайте после `mcp` параметр `--db`
+с абсолютным путём к SQLite-индексу.
+
+Для **Claude Desktop** добавьте сервер в `%APPDATA%\Claude\claude_desktop_config.json` и перезапустите клиент.
+[Документация MCP SDK](https://py.sdk.modelcontextprotocol.io/get-started/real-host/)
+
+```json
+{
+  "mcpServers": {
+    "pc-inspector": {
+      "command": "B:\\Programm\\pc-inspector\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "pcinspector", "mcp"]
+    }
+  }
+}
+```
+
+Для **Claude Code** зарегистрируйте сервер в папке проекта и проверьте подключение.
+[Документация Claude Code](https://code.claude.com/docs/en/mcp)
+
+```powershell
+claude mcp add --transport stdio pc-inspector -- "B:\Programm\pc-inspector\.venv\Scripts\python.exe" -m pcinspector mcp
+claude mcp get pc-inspector
+```
+
+Пример запроса в Claude — «Используй PC Inspector и объясни, чем занят диск C и что стоит проверить перед уборкой».
+
 ## Как поручить разработку ИИ-агенту
 
 Откройте папку проекта в агенте (Codex / ChatGPT, Claude Code и т. п.) и напишите:

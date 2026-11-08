@@ -64,13 +64,17 @@
 крупнейших файлов папки с долей от 0,5 %. Остальные байты остаются в суммарной плитке.
 
 ## Этап 3. MCP-сервер и сводка для ИИ
-- [ ] `services.ai_brief` + `cli brief` (F8)
-- [ ] `mcp_server.py`: `get_brief, list_analyzers, run_analyzer, tree, sql_query, start_scan, job_status` (F7)
-- [ ] Защита `sql_query`: `mode=ro`, `query_only`, белый список первого слова + тесты (§9.8)
-- [ ] Тест: в MCP нет инструментов, меняющих ФС
-- [ ] Инструкция подключения к Claude Desktop/Code в README
+- [x] `services.ai_brief` + `cli brief` (F8)
+- [x] `mcp_server.py`: `get_brief, list_analyzers, run_analyzer, tree, sql_query, start_scan, job_status` (F7)
+- [x] Защита `sql_query`: `mode=ro`, `query_only`, белый список первого слова + тесты (§9.8)
+- [x] Тест: в MCP нет инструментов, меняющих ФС
+- [x] Инструкция подключения к Claude Desktop/Code в README
 
 **Приёмка:** Claude, подключённый по MCP, отвечает на «чем занят диск C и что можно удалить?», опираясь на данные.
+
+**Результат 2026-11-08.** Локальный клиент MCP по stdio получил сводку и отчёты из временного
+индекса, запустил скан и прочитал его статус. Проверены обычный и legacy-режимы SDK,
+отказ при попытках записи через SQL и лимит в 200 находок. Приёмка в Claude с индексом C: остаётся открытой.
 
 ## Этап 4. Планы, выполнение, карантин, откат
 - [ ] Миграция: `plans, plan_items, actions_log, settings` (§6.2)

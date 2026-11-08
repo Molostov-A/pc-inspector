@@ -7,9 +7,11 @@ import os
 import re
 import sqlite3
 import subprocess
+import time
 from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
@@ -18,6 +20,7 @@ from .analyzers import REGISTRY, get
 from .analyzers.base import index_path, path_comparison
 from .analyzers.overview import directory_finding, find_directory
 from .core import db, jobs, safety, scanner
+from .core.fmt import DAY, human_size
 from .core.models import Finding, Report
 
 
@@ -271,6 +274,17 @@ def _sql_value(value: Any) -> Any:
     return value
 
 
+def _authorize_sql(
+    action: int,
+    _first: str | None,
+    _second: str | None,
+    _database: str | None,
+    _source: str | None,
+) -> int:
+    allowed = (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_RECURSIVE)
+    return sqlite3.SQLITE_OK if action in allowed else sqlite3.SQLITE_DENY
+
+
 def sql_readonly(query: str, limit: int = 500, *, db_path: Path | str | None = None) -> list[dict[str, Any]]:
     keyword = re.match(r"[A-Za-z]+", query.lstrip())
     if keyword is None or keyword[0].upper() not in {"SELECT", "WITH", "EXPLAIN"}:
@@ -278,7 +292,103 @@ def sql_readonly(query: str, limit: int = 500, *, db_path: Path | str | None = N
     if not 1 <= limit <= 10_000:
         raise ValueError("Лимит SQL должен быть от 1 до 10 000 строк")
     with closing(db.connect(_db_path(db_path), readonly=True)) as con:
+        con.set_authorizer(_authorize_sql)
         return [
             {name: _sql_value(value) for name, value in dict(row).items()}
             for row in con.execute(query).fetchmany(limit)
         ]
+
+
+def _markdown_cell(value: str) -> str:
+    return (
+        " ".join(value.splitlines())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("|", "&#124;")
+        .replace(chr(96), "&#96;")
+    )
+
+
+def ai_brief(max_items: int = 15, *, db_path: Path | str | None = None) -> str:
+    """Сформировать краткую Markdown-сводку из одного снимка SQLite."""
+    if not 1 <= max_items <= 200:
+        raise ValueError("Число строк сводки должно быть от 1 до 200")
+    limit = min(max_items, 10)
+    with closing(_read_index(db_path)) as con, con:
+        con.execute("BEGIN")
+        roots = get("roots")(con)
+        indexed = [item for item in roots.findings if item.kind == "stat"]
+        lines = ["# PC Inspector — сводка по индексу", ""]
+        if not indexed:
+            return "\n".join([*lines, "Индекс пуст. Запустите сканирование нужной папки или диска.", ""])
+        lines.extend(
+            [
+                "## Просканированные диски и папки",
+                "",
+                "| Корень | В индексе | Свободно | Ёмкость | Последний скан |",
+                "| --- | ---: | ---: | ---: | --- |",
+            ]
+        )
+        stale = []
+        now = time.time()
+        for item in indexed:
+            timestamp = item.meta.get("scanned_at")
+            date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M") if timestamp else "—"
+            if not timestamp or now - timestamp > 7 * DAY:
+                stale.append(_markdown_cell(item.title))
+            lines.append(
+                f"| {_markdown_cell(item.title)} | {human_size(item.size)} | "
+                f"{human_size(item.meta.get('disk_free'))} | "
+                f"{human_size(item.meta.get('disk_total'))} | {date} |"
+            )
+        if stale:
+            lines.extend(["", "Данные старше 7 дней или дата неизвестна — " + ", ".join(stale) + "."])
+        junk = get("junk")(con, limit=min(5, max_items))
+        lines.extend(
+            [
+                "",
+                "## Что можно освободить",
+                "",
+                f"- Можно освободить (safe) — {human_size(junk.summary['safe_size'])}.",
+                f"- Требуется проверка (review) — {human_size(junk.summary['review_size'])}.",
+            ]
+        )
+        lines.extend(
+            f"- {_markdown_cell(item.title)} — {human_size(item.size)} ({item.safety})."
+            for item in junk.findings
+        )
+        for depth in (1, 2):
+            lines.extend(["", f"## Крупные папки уровня {depth}", ""])
+            folders = con.execute(
+                "SELECT path, total_size FROM dirs WHERE depth = ? AND total_size > 0 "
+                "ORDER BY total_size DESC, path LIMIT ?",
+                (depth, limit),
+            ).fetchall()
+            lines.extend(
+                f"- {_markdown_cell(row['path'])} — {human_size(row['total_size'])}." for row in folders
+            )
+            if not folders:
+                lines.append("Подходящих папок нет.")
+        forgotten = get("forgotten_dirs")(con, limit=limit)
+        lines.extend(["", "## Забытые папки", ""])
+        lines.extend(
+            f"- {_markdown_cell(item.path or item.title)} — {human_size(item.size)}. {item.reason}"
+            for item in forgotten.findings
+        )
+        if not forgotten.findings:
+            lines.append("Подходящих папок нет.")
+        lines.extend(
+            [
+                "",
+                "## Дополнительные данные",
+                "",
+                "Сведения о дубликатах, использовании программ и росте появятся после соответствующих этапов.",
+            ]
+        )
+
+    text = "\n".join(lines) + "\n"
+    if len(text) > 12_000:
+        note = "\n\nСводка сокращена до 12 000 символов.\n"
+        return text[: 12_000 - len(note)].rsplit("\n", 1)[0] + note
+    return text
